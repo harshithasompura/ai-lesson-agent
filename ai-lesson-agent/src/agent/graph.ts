@@ -2,6 +2,7 @@ import { StateGraph, END } from "@langchain/langgraph";
 import { PostgresSaver } from "@langchain/langgraph-checkpoint-postgres";
 import { Pool } from "pg";
 import { GraphState, GraphStateType } from "./state";
+import db from "@/lib/db";
 import { generatePlanNode, planApprovalNode } from "./planner";
 import { writeConceptGraphNode } from "./conceptGraph";
 import {
@@ -51,9 +52,23 @@ async function advanceNode(
   };
 }
 
+// ── loadDocument node ──────────────────────────────────────────────────────
+
+async function loadDocumentNode(
+  state: GraphStateType
+): Promise<Partial<GraphStateType>> {
+  const { rows } = await db.query<{ extracted_text: string }>(
+    "SELECT extracted_text FROM documents WHERE id = $1",
+    [state.documentId]
+  );
+  if (!rows[0]) throw new Error(`Document ${state.documentId} not found`);
+  return { extractedText: rows[0].extracted_text };
+}
+
 // ── Graph assembly ─────────────────────────────────────────────────────────
 
 const workflow = new StateGraph(GraphState)
+  .addNode("loadDocument", loadDocumentNode)
   .addNode("generatePlan", generatePlanNode)
   .addNode("planApproval", planApprovalNode)
   .addNode("writeConceptGraph", writeConceptGraphNode)
@@ -66,7 +81,8 @@ const workflow = new StateGraph(GraphState)
   .addNode("advance", advanceNode)
   .addNode("completion", completionNode)
 
-  .addEdge("__start__", "generatePlan")
+  .addEdge("__start__", "loadDocument")
+  .addEdge("loadDocument", "generatePlan")
   .addEdge("generatePlan", "planApproval")
   .addEdge("planApproval", "writeConceptGraph")
   .addEdge("writeConceptGraph", "selectNextObjective")
