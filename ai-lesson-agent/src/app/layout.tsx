@@ -28,7 +28,7 @@ export default function RootLayout({
       lang="en"
       className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
     >
-      <body className="min-h-full flex flex-col"><CopilotProvider>{children}</CopilotProvider></body>
+      <body suppressHydrationWarning className="min-h-full flex flex-col"><CopilotProvider>{children}</CopilotProvider></body>
     </html>
   );
 }

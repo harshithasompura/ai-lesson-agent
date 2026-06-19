@@ -39,10 +39,10 @@ export default function Home() {
   const isComplete =
     documentId &&
     !running &&
-    state.objectives.length > 0 &&
+    (state.objectives?.length ?? 0) > 0 &&
     state.currentObjectiveIndex >= state.objectives.length;
 
-  const lastMessage = state.messages.at(-1);
+  const lastMessage = state.messages?.at(-1);
   const recap =
     isComplete && lastMessage
       ? typeof lastMessage === "object" && "content" in lastMessage
