@@ -110,10 +110,11 @@ This is the one new stateful dependency beyond Postgres, added deliberately narr
 
 **Plan approval** — `interrupt()` inside the node, guarded by a state check (`state.planApproved ?? interrupt(...)`) so re-entering the node on retries doesn't re-fire the prompt. Resume value is the edited plan object, via `Command({ resume: editedPlan })`. On the frontend, this pairs with `useInterrupt`, not `useHumanInTheLoop` — the `agentId` passed to the hook has to exactly match the runtime-registered agent ID, or the interrupt silently never fires. Immediately after resume, the concept-graph write step (§2.4, §3 step 8a) persists the filtered prerequisite edges to Neo4j — no interrupt here, no LLM call, just a write with the same fallback discipline as the reads.
 
-**Quiz loop** (Quiz Agent + Tutor Agent) — per objective, five steps:
+**Quiz loop** (Quiz Agent + Tutor Agent) — per objective, six steps:
 - *Select-next-objective* step: Neo4j read for the unresolved objective with fewest unresolved prerequisites; falls back to plan-list order on timeout, error, or a cycle.
-- *Present question* node (Quiz Agent): builds the MCQ, calls `interrupt({ type: "quizAnswer", ... })`.
+- *Generate MCQ* node (Quiz Agent): builds the structured question output `{ question, choices[4], correctIndex, explanation }`.
 - *Self-eval* node (Quiz Agent): scores the just-generated MCQ before it's ever shown to the user; below threshold, loops back to regenerate (capped — see §3, step 9a).
+- *Present question* node (Quiz Agent): calls `interrupt({ type: "quizAnswer", objective, question, choices })` — only reached after self-eval passes.
 - *Grade* node (Quiz Agent): has the answer key, evaluates the resumed answer.
 - *Hint* node (Tutor Agent): triggered only on incorrect, structurally cannot see the answer key (decision #7 — this is an isolation guarantee, not a prompt instruction). On the final allowed attempt, this node reveals the answer with explanation instead of another hint (decision #12 in the design-decisions doc).
 
