@@ -9,7 +9,7 @@ Each task has a one-liner on what to install, create, or do. Work top-to-bottom;
 ## Phase 0 — Accounts & Services
 
 - [x] **Neo4j Aura** — free-tier instance created at [console.neo4j.io](https://console.neo4j.io); copy URI, username, password to `.env.local`
-- [x] **Supabase (Postgres)** — project created at [supabase.com](https://supabase.com); use the **direct** connection string (not the pooler URL) for `PostgresSaver` compatibility: `Settings → Database → Connection string → URI` (port 5432); copy to `.env.local` as `DATABASE_URL`
+- [x] **Supabase (Postgres)** — project created at [supabase.com](https://supabase.com); use the **session pooler** connection string: `Settings → Database → Connection string → Session pooler` (port 5432); copy to `.env.local` as `DATABASE_URL`
 - [x] **Anthropic API key** — get from [console.anthropic.com](https://console.anthropic.com/settings/keys); add to `.env.local` as `ANTHROPIC_API_KEY`
 - [x] **CopilotKit Cloud** — account created at [cloud.copilotkit.ai](https://cloud.copilotkit.ai); copy `COPILOT_CLOUD_PUBLIC_API_KEY` to `.env.local`
 
@@ -57,9 +57,9 @@ npm install -D @types/pg
 
 ## Phase 3 — Database setup
 
-- [ ] **Postgres tables** — run migration to create `documents(id, filename, extracted_text, created_at)` and `quiz_attempts(id, document_id, objective_id, question, choices jsonb, selected, correct boolean, attempt_number, resolution, created_at)`
-- [ ] **PostgresSaver setup** — call `await checkpointer.setup()` once at app startup (provisions LangGraph checkpoint tables in the same DB)
-- [ ] **Neo4j schema** — no migration needed; nodes/edges are created at runtime. Confirm Aura instance is reachable with a test `driver.verifyConnectivity()` call
+- [x] **Postgres tables** — run migration to create `documents(id, filename, extracted_text, created_at)` and `quiz_attempts(id, document_id, objective_id, question, choices jsonb, selected, correct boolean, attempt_number, resolution, created_at)`
+- [x] **PostgresSaver setup** — call `await checkpointer.setup()` once at app startup (provisions LangGraph checkpoint tables in the same DB)
+- [x] **Neo4j schema** — no migration needed; nodes/edges are created at runtime. Confirm Aura instance is reachable with a test `driver.verifyConnectivity()` call
 
 ---
 
