@@ -65,8 +65,8 @@ npm install -D @types/pg
 
 ## Phase 4 — PDF upload + extraction
 
-- [ ] **Upload route** — `app/api/upload/route.ts`; accept `multipart/form-data`, extract text with `unpdf`'s `extractText(buffer)`, write row to `documents` table, return `documentId`
-- [ ] **Upload UI** — `src/components/UploadForm.tsx`; file input (PDF only), POST to `/api/upload`, store `documentId` in component state
+- [x] **Upload route** — `app/api/upload/route.ts`; accept `multipart/form-data`, extract text with `unpdf`'s `extractText(buffer)`, write row to `documents` table, return `documentId`
+- [x] **Upload UI** — `src/components/UploadForm.tsx`; file input (PDF only), POST to `/api/upload`, store `documentId` in component state
 
 ---
 
