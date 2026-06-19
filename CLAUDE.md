@@ -7,6 +7,13 @@ Every decision, file, and session is being evaluated. Code quality, architecture
 
 ---
 
+## Session start checklist
+
+1. If `.claude/session-reminder.md` exists — complete pending tasks from last session, then delete it.
+2. Read `tasks.md` for current implementation status.
+
+---
+
 ## Session rules — read every session, no exceptions
 
 ### 1. AI_USAGE.md — update every session

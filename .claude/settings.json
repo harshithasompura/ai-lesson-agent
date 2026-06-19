@@ -6,7 +6,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "echo 'REMINDER: Before closing — append AI_USAGE.md entry per CLAUDE.md rules. Update README.md if features changed.'"
+            "command": "ROOT=$(git rev-parse --show-toplevel); modified=$(stat -f %m \"$ROOT/AI_USAGE.md\" 2>/dev/null || echo 0); now=$(date +%s); age=$(( (now - modified) / 3600 )); [ $age -gt 8 ] && echo \"⚠️  AI_USAGE.md last updated ${age}h ago — append session entry per CLAUDE.md\"; echo 'TODO: Append AI_USAGE.md entry. Update README.md if features changed.' > \"$ROOT/.claude/session-reminder.md\""
           }
         ]
       }
