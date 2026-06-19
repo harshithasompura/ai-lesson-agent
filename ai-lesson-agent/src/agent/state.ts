@@ -20,6 +20,8 @@ export const GraphState = Annotation.Root({
   answerKey: Annotation<string>(),
   attemptCount: Annotation<number>(),
   evalAttemptCount: Annotation<number>(),
+  // selectedIndex from interrupt; read by gradingNode; avoids sentinel in attempts reducer
+  pendingAnswer: Annotation<number | null>(),
   attempts: Annotation<string[]>({
     reducer: (prev, next) => [...prev, ...next],
     default: () => [],

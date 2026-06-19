@@ -193,7 +193,8 @@ export async function presentQuestionNode(
   const objective = state.objectives[state.currentObjectiveIndex];
   const { question, choices } = JSON.parse(state.currentQuestion);
 
-  const selectedIndex: number = interrupt({
+  // Resume value wrapped as { selectedIndex } to avoid LangGraph EmptyInputError when index is 0
+  const { selectedIndex }: { selectedIndex: number } = interrupt({
     type: "quizAnswer",
     objective,
     question,
@@ -201,7 +202,7 @@ export async function presentQuestionNode(
     attemptCount: state.attemptCount,
   });
 
-  return { attempts: [JSON.stringify({ pending: true, selectedIndex })] };
+  return { pendingAnswer: selectedIndex };
 }
 
 /** Grade the user's answer. Write quiz_attempts row to Postgres. */
@@ -211,12 +212,7 @@ export async function gradingNode(
   const { question, choices } = JSON.parse(state.currentQuestion);
   const { correctIndex, explanation } = JSON.parse(state.answerKey);
 
-  // Last pending attempt has the selectedIndex
-  const pendingRaw = [...state.attempts].reverse().find((a) => {
-    const p = JSON.parse(a);
-    return p.pending === true;
-  });
-  const { selectedIndex } = JSON.parse(pendingRaw!);
+  const selectedIndex = state.pendingAnswer!;
 
   const isCorrect = selectedIndex === correctIndex;
   const newAttemptCount = (state.attemptCount ?? 0) + 1;
@@ -240,13 +236,10 @@ export async function gradingNode(
     ]
   );
 
-  // Replace the pending sentinel with the real attempt record
-  const filteredAttempts = state.attempts.filter((a) => !JSON.parse(a).pending);
-
   return {
     attemptCount: newAttemptCount,
+    pendingAnswer: null,
     attempts: [
-      ...filteredAttempts,
       JSON.stringify({
         objectiveIndex: state.currentObjectiveIndex,
         question,
@@ -257,6 +250,6 @@ export async function gradingNode(
         resolution,
         explanation: resolution === "revealed" ? explanation : null,
       }),
-    ].slice(filteredAttempts.length), // only emit the new record (append reducer adds it)
+    ],
   };
 }
