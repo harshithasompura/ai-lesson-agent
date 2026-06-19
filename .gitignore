@@ -141,3 +141,6 @@ dist
 vite.config.js.timestamp-*
 vite.config.ts.timestamp-*
 .vite/
+
+# AI usage documentation (happy to share this, but not sure if it should be public)
+AI_USAGE.md

@@ -1,2 +1,3 @@
-# ai-lesson-agent
-AI Learning Agent that transforms a PDF into an interactive lesson
+# AI Learning Agent
+
+Build an AI learning agent that transforms a PDF into an interactive lesson.
