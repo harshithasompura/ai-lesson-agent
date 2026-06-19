@@ -73,32 +73,43 @@ npm install -D @types/pg
 ## Phase 5 — LangGraph agent graph
 
 ### 5a — Shared infrastructure
-- [ ] **Postgres pool** — `src/lib/db.ts`; single `new pg.Pool({ connectionString })` export
-- [ ] **Neo4j driver** — `src/lib/neo4j.ts`; single `neo4j.driver(uri, neo4j.auth.basic(user, pass))` export; wrap every call with ~1.5s timeout + fallback per CONSTITUTION §Principle 4
-- [ ] **State schema** — `src/agent/state.ts`; define `GraphState` with Zod or `Annotation`: `documentId`, `extractedText`, `plan`, `planApproved`, `prerequisites`, `objectives`, `currentObjectiveIndex`, `currentQuestion`, `answerKey`, `attemptCount`, `evalAttemptCount`, `attempts[]`, `messages[]`
+- [x] **Postgres pool** — `src/lib/db.ts`; single `new pg.Pool({ connectionString })` export
+- [x] **Neo4j driver** — `src/lib/neo4j.ts`; single `neo4j.driver(uri, neo4j.auth.basic(user, pass))` export; wrap every call with ~1.5s timeout + fallback per CONSTITUTION §Principle 4
+- [x] **State schema** — `src/agent/state.ts`; define `GraphState` with Zod or `Annotation`: `documentId`, `extractedText`, `plan`, `planApproved`, `prerequisites`, `objectives`, `currentObjectiveIndex`, `currentQuestion`, `answerKey`, `attemptCount`, `evalAttemptCount`, `attempts[]`, `messages[]`
 
 ### 5b — Planner Agent
-- [ ] **System prompt** — sees: full PDF text, plan state. Never sees: quiz attempts, answer keys (CONSTITUTION §Principle 5)
-- [ ] **Plan-generation node** — single LLM call; structured output with `objectives[]` and `prerequisites: [{from, to}]`; write to state
-- [ ] **Self-eval on plan** — explicitly NOT built in phase 1 (PLAN.md §6); skip for now
-- [ ] **Plan-approval node** — `state.planApproved ?? interrupt({ type: "approval", content: plan })`; guard prevents re-firing on retry
+- [x] **System prompt** — sees: full PDF text, plan state. Never sees: quiz attempts, answer keys (CONSTITUTION §Principle 5)
+- [x] **Plan-generation node** — single LLM call; structured output with `objectives[]` and `prerequisites: [{from, to}]`; write to state
+- [x] **Self-eval on plan** — explicitly NOT built in phase 1 (PLAN.md §6); skip for now
+- [x] **Plan-approval node** — `state.planApproved ?? interrupt({ type: "approval", content: plan })`; guard prevents re-firing on retry
 
 ### 5c — Concept graph write (after plan approval)
-- [ ] **Neo4j write step** — filter `prerequisites` list against user-edited objectives (drop edges referencing removed objectives), write `(:Objective)-[:PREREQUISITE_FOR]->(:Objective)` nodes; wrapped with timeout + fallback; runs once after plan-approval interrupt resumes
+- [x] **Neo4j write step** — filter `prerequisites` list against user-edited objectives (drop edges referencing removed objectives), write `(:Objective)-[:PREREQUISITE_FOR]->(:Objective)` nodes; wrapped with timeout + fallback; runs once after plan-approval interrupt resumes
 
 ### 5d — Quiz Agent
-- [ ] **System prompt** — sees: approved plan, current objective, answer key it authors. Quiz Agent owns the answer key
-- [ ] **Select-next-objective step** — query Neo4j for unresolved objective with fewest unresolved prerequisites; fallback to list order on timeout/error/cycle
-- [ ] **MCQ generation node** — structured output: `{ question, choices[4], correctIndex, explanation }`; answer key written to Quiz Agent's state slice only
-- [ ] **Self-eval node** — score generated MCQ on rubric (unambiguous answer, plausible distractors, objective alignment); below threshold → regenerate with critique; cap: 2 regenerations (3 total), tracked via `evalAttemptCount` in state (CONSTITUTION §Principle 3)
-- [ ] **Present-question node** — `interrupt({ type: "quizAnswer", objective, question, choices })`; guarded
-- [ ] **Grading node** — Quiz Agent compares `selected` to `correctIndex`; writes `quiz_attempts` row to Postgres
+- [x] **System prompt** — sees: approved plan, current objective, answer key it authors. Quiz Agent owns the answer key
+- [x] **Select-next-objective step** — query Neo4j for unresolved objective with fewest unresolved prerequisites; fallback to list order on timeout/error/cycle
+- [x] **MCQ generation node** — structured output: `{ question, choices[4], correctIndex, explanation }`; answer key written to Quiz Agent's state slice only
+- [x] **Self-eval node** — score generated MCQ on rubric (unambiguous answer, plausible distractors, objective alignment); below threshold → regenerate with critique; cap: 2 regenerations (3 total), tracked via `evalAttemptCount` in state (CONSTITUTION §Principle 3)
+- [x] **Present-question node** — `interrupt({ type: "quizAnswer", objective, question, choices })`; guarded
+- [x] **Grading node** — Quiz Agent compares `selected` to `correctIndex`; writes `quiz_attempts` row to Postgres
 
 ### 5e — Tutor Agent
 - [ ] **System prompt** — sees: question, objective, incorrect attempt, `attemptCount`. Structurally never sees answer key (CONSTITUTION §Principle 1)
 - [ ] **Hint node** — triggered on incorrect + `attemptCount < 3`; returns hint only; on `attemptCount === 3` returns full explanation + correct answer and marks resolution `revealed`
 - [ ] **Retry loop edge** — `attemptCount < 3` → re-fire `quizAnswer` interrupt; `attemptCount >= 3` → advance to next objective (CONSTITUTION §Principle 2 + 3)
 - [ ] **Completion node** — reads `quiz_attempts` rows from Postgres (not agent memory, CONSTITUTION §Principle 9); attempts Neo4j read for prerequisite enrichment on struggled objectives; fallback to flat recap
+
+### 5e-pre — OPEN ISSUE: attempts reducer vs. pending sentinel (resolve in 5f)
+
+> **Problem:** `attempts` uses an append-only reducer (`[...prev, ...next]`). `gradingNode` in `src/agent/quiz.ts` writes a pending sentinel `{ pending: true, selectedIndex }` via `presentQuestionNode`, then tries to replace it in `gradingNode` by slicing — but the append reducer means the sentinel persists in state alongside the real record.
+>
+> **Fix options (pick one in 5f before wiring):**
+> 1. Add `pendingAnswer: Annotation<number | null>()` to `GraphState` — `presentQuestionNode` writes `selectedIndex` there, `gradingNode` reads it, no sentinel in `attempts` at all. Cleanest.
+> 2. Change `attempts` reducer to replace-by-objectiveIndex instead of pure append — more complex, breaks other consumers.
+> 3. Keep sentinel but add a `cleanupNode` after grading that filters `attempts` — extra node just for cleanup, not great.
+>
+> **Recommended:** option 1. Add `pendingAnswer` to `state.ts`, update `presentQuestionNode` + `gradingNode` in `quiz.ts` to use it.
 
 ### 5f — Graph wiring
 - [ ] **Graph assembly** — `src/agent/graph.ts`; wire all nodes with `StateGraph`, attach `PostgresSaver` as checkpointer, export compiled graph
