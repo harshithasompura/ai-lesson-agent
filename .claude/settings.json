@@ -1,0 +1,15 @@
+{
+  "hooks": {
+    "Stop": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "echo 'REMINDER: Before closing — append AI_USAGE.md entry per CLAUDE.md rules. Update README.md if features changed.'"
+          }
+        ]
+      }
+    ]
+  }
+}
