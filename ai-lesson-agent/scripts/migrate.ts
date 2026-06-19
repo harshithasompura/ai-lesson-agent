@@ -33,11 +33,12 @@ async function migratePostgres() {
       CREATE TABLE IF NOT EXISTS quiz_attempts (
         id               SERIAL PRIMARY KEY,
         document_id      INTEGER     NOT NULL REFERENCES documents(id),
-        objective_id     TEXT        NOT NULL,
+        objective_index  INTEGER     NOT NULL,
+        objective        TEXT        NOT NULL,
         question         TEXT        NOT NULL,
         choices          JSONB       NOT NULL,
-        selected         INTEGER,
-        correct          BOOLEAN,
+        selected_index   INTEGER,
+        correct_index    INTEGER     NOT NULL,
         attempt_number   INTEGER     NOT NULL,
         resolution       TEXT,
         created_at       TIMESTAMPTZ NOT NULL DEFAULT NOW()

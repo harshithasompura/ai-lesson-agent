@@ -16,6 +16,7 @@
 
 import { Command } from "@langchain/langgraph";
 import { graph, checkpointer } from "../agent/graph";
+import db from "@/lib/db";
 
 // ── Minimal test document ──────────────────────────────────────────────────
 
@@ -27,7 +28,6 @@ The Calvin cycle (light-independent reactions) uses ATP and NADPH to fix CO2 int
 Chlorophyll a and b are the primary pigments that absorb light, mainly in the red and blue spectrum.
 `;
 
-const DOCUMENT_ID = `test-${Date.now()}`;
 const THREAD_ID = `thread-${Date.now()}`;
 const config = { configurable: { thread_id: THREAD_ID } };
 
@@ -43,6 +43,13 @@ function log(label: string, value?: unknown) {
 
 async function main() {
   console.log("=== Phase 5 graph smoke test ===");
+
+  // 0. Insert real document row so document_id FK is valid
+  const { rows } = await db.query(
+    `INSERT INTO documents (filename, extracted_text) VALUES ($1, $2) RETURNING id`,
+    ["smoke-test.txt", EXTRACTED_TEXT]
+  );
+  const DOCUMENT_ID: number = rows[0].id;
   console.log(`documentId: ${DOCUMENT_ID}  threadId: ${THREAD_ID}`);
 
   // 1. Init checkpointer tables
