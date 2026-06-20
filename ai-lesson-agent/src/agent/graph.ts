@@ -11,6 +11,7 @@ import {
   selfEvalNode,
   presentQuestionNode,
   gradingNode,
+  resultNode,
 } from "./quiz";
 import { hintNode, completionNode } from "./tutor";
 
@@ -21,12 +22,10 @@ function afterSelfEval(state: GraphStateType): "generateMCQ" | "presentQuestion"
   return state.currentQuestion ? "presentQuestion" : "generateMCQ";
 }
 
-function afterGrading(state: GraphStateType): "hint" | "advance" {
+function afterResult(state: GraphStateType): "hint" | "advance" {
   const last = state.attempts.at(-1);
-  if (!last) return "hint";
+  if (!last) return "advance";
   const { resolution } = JSON.parse(last);
-  // "correct" skips hint entirely; "revealed" and null both go to hint
-  // (hintNode handles reveal when attemptCount >= 3, then afterHint advances)
   return resolution === "correct" ? "advance" : "hint";
 }
 
@@ -49,13 +48,14 @@ function afterSelectObjective(
 async function advanceNode(
   state: GraphStateType
 ): Promise<Partial<GraphStateType>> {
-  void state; // read to satisfy TS; we're just resetting fields
+  void state;
   return {
     currentQuestion: "",
     answerKey: "",
     attemptCount: 0,
     evalAttemptCount: 0,
     pendingAnswer: null,
+    lastResult: null,
   };
 }
 
@@ -84,6 +84,7 @@ const workflow = new StateGraph(GraphState)
   .addNode("selfEval", selfEvalNode)
   .addNode("presentQuestion", presentQuestionNode)
   .addNode("grading", gradingNode)
+  .addNode("result", resultNode)
   .addNode("hint", hintNode)
   .addNode("advance", advanceNode)
   .addNode("completion", completionNode)
@@ -103,7 +104,8 @@ const workflow = new StateGraph(GraphState)
     presentQuestion: "presentQuestion",
   })
   .addEdge("presentQuestion", "grading")
-  .addConditionalEdges("grading", afterGrading, {
+  .addEdge("grading", "result")
+  .addConditionalEdges("result", afterResult, {
     hint: "hint",
     advance: "advance",
   })

@@ -84,6 +84,7 @@ export default function Home() {
       attemptCount: 0,
       evalAttemptCount: 0,
       pendingAnswer: null,
+      lastResult: null,
       attempts: [],
       messages: [],
     },
@@ -135,6 +136,10 @@ export default function Home() {
     await resume(JSON.stringify({ selectedIndex: index }));
   }, [resume]);
 
+  const handleContinue = useCallback(async () => {
+    await resume(JSON.stringify({ continue: true }));
+  }, [resume]);
+
   const showPlanApproval = documentId && !running && state.plan && !state.planApproved;
   const showQuiz = documentId && !running && state.planApproved && state.currentQuestion;
 
@@ -144,13 +149,38 @@ export default function Home() {
     (state.objectives?.length ?? 0) > 0 &&
     state.currentObjectiveIndex >= state.objectives.length;
 
-  const lastMessage = state.messages?.at(-1);
-  const recap =
-    isComplete && lastMessage
-      ? typeof lastMessage === "object" && "content" in lastMessage
-        ? String((lastMessage as { content: unknown }).content)
-        : null
-      : null;
+  const recapText = (() => {
+    if (!isComplete) return null;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const last = state.messages?.findLast((m: any) => {
+      const c = String(m.content ?? "");
+      return (m._getType?.() === "ai" || m.role === "assistant") && c.startsWith("## Session");
+    });
+    return last ? String((last as { content: unknown }).content) : null;
+  })();
+
+  const recapStats = (() => {
+    if (!isComplete) return null;
+    const records = (state.attempts ?? []).map((a: string) => {
+      try { return JSON.parse(a); } catch { return null; }
+    }).filter(Boolean);
+    const byObj = new Map<number, { resolution: string; objectiveIndex: number }>();
+    for (const r of records) byObj.set(r.objectiveIndex, r);
+    const finals = [...byObj.values()];
+    return {
+      correct: finals.filter((r) => r.resolution === "correct").length,
+      total: state.objectives?.length ?? 0,
+      mastered: finals.filter((r) => r.resolution === "correct").map((r) => state.objectives[r.objectiveIndex]).filter(Boolean),
+      review: finals.filter((r) => r.resolution !== "correct").map((r) => state.objectives[r.objectiveIndex]).filter(Boolean),
+    };
+  })();
+
+  const studyTips = (() => {
+    if (!recapText) return [];
+    const match = recapText.match(/\*\*Study tips:\*\*\n([\s\S]+)/);
+    if (!match) return [];
+    return match[1].trim().split("\n").filter((l) => l.startsWith("- ")).map((l) => l.slice(2));
+  })();
 
   // derive active step for the rail
   const activeStep: Step = !documentId ? "upload" : showPlanApproval ? "plan" : "quiz";
@@ -205,20 +235,26 @@ export default function Home() {
           {showQuiz && (() => {
             try {
               const { question, choices } = JSON.parse(state.currentQuestion);
-              const lastMsg = state.messages?.findLast(
-                // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                (m: any) => m._getType?.() === "ai" || m.role === "assistant"
-              );
-              const hint = lastMsg ? String(lastMsg.content) : undefined;
+              // eslint-disable-next-line @typescript-eslint/no-explicit-any
+              const hintMsg = state.messages?.findLast((m: any) => {
+                const content = String(m.content ?? "");
+                return (m._getType?.() === "ai" || m.role === "assistant") &&
+                  !content.startsWith("MCQ critique") &&
+                  !content.startsWith("## Session") &&
+                  !content.startsWith("**Score:**");
+              });
+              const hint = hintMsg ? String(hintMsg.content) : undefined;
               return (
                 <QuizQuestion
                   question={question}
                   choices={choices}
                   hint={hint}
+                  result={state.lastResult ?? undefined}
                   loading={resuming}
                   objectiveIndex={state.currentObjectiveIndex}
                   totalObjectives={state.objectives.length}
                   onSelect={handleQuizAnswer}
+                  onContinue={handleContinue}
                 />
               );
             } catch {
@@ -227,21 +263,58 @@ export default function Home() {
           })()}
 
           {/* Complete */}
-          {isComplete && (
+          {isComplete && recapStats && (
             <div className="animate-fade-in">
+              {/* Score */}
               <div className="flex flex-col items-center gap-3 mb-8">
-                <div className="w-12 h-12 rounded-full bg-teal-600 flex items-center justify-center">
-                  <svg className="w-6 h-6 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
-                  </svg>
+                <div className="w-16 h-16 rounded-full bg-teal-600 flex items-center justify-center">
+                  <span className="text-white font-bold text-lg">{recapStats.correct}/{recapStats.total}</span>
                 </div>
                 <h2 className="text-xl font-semibold text-stone-900">Session complete</h2>
-                <p className="text-stone-500 text-sm">Here&apos;s a summary of what you covered</p>
+                <p className="text-stone-500 text-sm">
+                  {recapStats.correct === recapStats.total ? "Perfect score!" : `${recapStats.correct} of ${recapStats.total} objectives mastered`}
+                </p>
               </div>
 
-              {recap && (
-                <div className="bg-white border border-stone-200 rounded-xl p-6 text-sm text-stone-700 whitespace-pre-wrap leading-relaxed mb-6">
-                  {recap}
+              {recapStats.mastered.length > 0 && (
+                <div className="bg-green-50 border border-green-200 rounded-xl p-4 mb-3">
+                  <p className="text-xs font-semibold text-green-700 uppercase tracking-wide mb-2">Mastered</p>
+                  <ul className="space-y-1.5">
+                    {recapStats.mastered.map((obj, i) => (
+                      <li key={i} className="flex items-start gap-2 text-sm text-green-900">
+                        <span className="text-green-500 mt-0.5 flex-shrink-0">✓</span>
+                        {obj}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+
+              {recapStats.review.length > 0 && (
+                <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 mb-3">
+                  <p className="text-xs font-semibold text-amber-700 uppercase tracking-wide mb-2">Review</p>
+                  <ul className="space-y-1.5">
+                    {recapStats.review.map((obj, i) => (
+                      <li key={i} className="flex items-start gap-2 text-sm text-amber-900">
+                        <span className="text-amber-500 mt-0.5 flex-shrink-0">↩</span>
+                        {obj}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+
+              {studyTips.length > 0 && (
+                <div className="bg-white border border-stone-200 rounded-xl p-4 mb-6">
+                  <p className="text-xs font-semibold text-stone-500 uppercase tracking-wide mb-2">Study tips</p>
+                  <ul className="space-y-2">
+                    {studyTips.map((tip, i) => (
+                      <li key={i} className="text-sm text-stone-700 leading-snug flex items-start gap-2">
+                        <span className="text-teal-500 mt-0.5 flex-shrink-0">→</span>
+                        <span>{tip.replace(/\*\*(.*?)\*\*/g, "$1")}</span>
+                      </li>
+                    ))}
+                  </ul>
                 </div>
               )}
 

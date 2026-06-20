@@ -1,6 +1,19 @@
 "use client";
 import { useState } from "react";
 
+type PlanData = {
+  objectives: string[];
+  prerequisites: { from: string; to: string }[];
+};
+
+function parsePlan(raw: string): PlanData {
+  try {
+    return JSON.parse(raw);
+  } catch {
+    return { objectives: [raw], prerequisites: [] };
+  }
+}
+
 export function PlanApproval({
   plan,
   onApprove,
@@ -8,45 +21,88 @@ export function PlanApproval({
   plan: string;
   onApprove: (plan: string) => void;
 }) {
-  const [text, setText] = useState(plan);
-  const [editing, setEditing] = useState(false);
+  const parsed = parsePlan(plan);
+  const [objectives, setObjectives] = useState<string[]>(parsed.objectives);
+  const [newObj, setNewObj] = useState("");
+
+  function remove(i: number) {
+    setObjectives((prev) => prev.filter((_, idx) => idx !== i));
+  }
+
+  function add() {
+    const trimmed = newObj.trim();
+    if (!trimmed) return;
+    setObjectives((prev) => [...prev, trimmed]);
+    setNewObj("");
+  }
+
+  function approve() {
+    const filteredPrereqs = parsed.prerequisites.filter(
+      (p) => objectives.includes(p.from) && objectives.includes(p.to)
+    );
+    onApprove(JSON.stringify({ objectives, prerequisites: filteredPrereqs }));
+  }
 
   return (
     <div className="animate-fade-in">
       <div className="mb-6">
         <h2 className="text-xl font-semibold text-stone-900">Your lesson plan</h2>
-        <p className="text-stone-500 text-sm mt-1">Review the plan below. Edit it if you&apos;d like, then start your quiz.</p>
+        <p className="text-stone-500 text-sm mt-1">
+          {objectives.length} learning objective{objectives.length !== 1 ? "s" : ""} — remove or add any before starting.
+        </p>
       </div>
 
       <div className="bg-white border border-stone-200 rounded-xl overflow-hidden mb-4">
-        {editing ? (
-          <textarea
-            className="w-full h-72 font-mono text-sm p-4 resize-none focus:outline-none"
-            value={text}
-            onChange={(e) => setText(e.target.value)}
-            autoFocus
-          />
+        {objectives.length === 0 ? (
+          <p className="px-4 py-6 text-sm text-stone-400 text-center">No objectives — add at least one below.</p>
         ) : (
-          <div className="p-4 text-sm text-stone-700 whitespace-pre-wrap leading-relaxed max-h-72 overflow-y-auto">
-            {text}
-          </div>
+          <ul className="divide-y divide-stone-100">
+            {objectives.map((obj, i) => (
+              <li key={i} className="flex items-start gap-3 px-4 py-3 group">
+                <span className="flex-shrink-0 w-6 h-6 rounded-md bg-teal-100 text-teal-700 text-xs font-bold flex items-center justify-center mt-0.5">
+                  {i + 1}
+                </span>
+                <span className="flex-1 text-sm text-stone-700 leading-snug">{obj}</span>
+                <button
+                  onClick={() => remove(i)}
+                  className="flex-shrink-0 text-stone-300 hover:text-red-400 transition-colors opacity-0 group-hover:opacity-100"
+                  aria-label="Remove objective"
+                >
+                  <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                  </svg>
+                </button>
+              </li>
+            ))}
+          </ul>
         )}
+
+        <div className="border-t border-stone-100 px-4 py-3 flex gap-2 items-center">
+          <input
+            type="text"
+            value={newObj}
+            onChange={(e) => setNewObj(e.target.value)}
+            onKeyDown={(e) => e.key === "Enter" && add()}
+            placeholder="Add an objective…"
+            className="flex-1 text-sm text-stone-700 placeholder:text-stone-400 focus:outline-none bg-transparent"
+          />
+          <button
+            onClick={add}
+            disabled={!newObj.trim()}
+            className="text-teal-600 text-sm font-medium disabled:opacity-30 hover:text-teal-700 transition-colors"
+          >
+            Add
+          </button>
+        </div>
       </div>
 
-      <div className="flex gap-3">
-        <button
-          className="px-4 py-2.5 text-sm text-stone-600 border border-stone-300 rounded-xl hover:bg-stone-50 transition-colors"
-          onClick={() => setEditing((e) => !e)}
-        >
-          {editing ? "Preview" : "Edit plan"}
-        </button>
-        <button
-          className="flex-1 py-2.5 rounded-xl bg-teal-600 text-white font-medium hover:bg-teal-700 transition-colors"
-          onClick={() => onApprove(text)}
-        >
-          Start quiz →
-        </button>
-      </div>
+      <button
+        disabled={objectives.length === 0}
+        className="w-full py-2.5 rounded-xl bg-teal-600 text-white font-medium hover:bg-teal-700 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+        onClick={approve}
+      >
+        Start quiz →
+      </button>
     </div>
   );
 }

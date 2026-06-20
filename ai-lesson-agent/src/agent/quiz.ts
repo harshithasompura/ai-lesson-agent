@@ -119,9 +119,9 @@ export async function generateMCQNode(
 
   // CONSTITUTION §Principle 5: Quiz Agent sees approved plan + objective only
   // Include any critique messages from prior self-eval attempts
-  const critiqueMessages = (state.messages ?? []).filter(
-    (m: { role: string; content: string }) =>
-      m.role === "assistant" && m.content?.startsWith("MCQ critique")
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const critiqueMessages = (state.messages ?? []).filter((m: any) =>
+    (m.role === "assistant" || m._getType?.() === "ai") && String(m.content ?? "").startsWith("MCQ critique")
   );
   const mcq: MCQ = await quizModel.invoke([
     { role: "system", content: QUIZ_SYSTEM },
@@ -211,6 +211,12 @@ export async function presentQuestionNode(
   return { pendingAnswer: selectedIndex };
 }
 
+/** Interrupt to show the grading result in the UI before advancing. Clears lastResult on resume. */
+export async function resultNode(_state: GraphStateType): Promise<Partial<GraphStateType>> {
+  interrupt({ type: "result" });
+  return { lastResult: null };
+}
+
 /** Grade the user's answer. Write quiz_attempts row to Postgres. */
 export async function gradingNode(
   state: GraphStateType
@@ -245,6 +251,13 @@ export async function gradingNode(
   return {
     attemptCount: newAttemptCount,
     pendingAnswer: null,
+    lastResult: {
+      isCorrect,
+      correctIndex,
+      selectedIndex,
+      explanation: (isCorrect || resolution === "revealed") ? explanation : null,
+      resolution,
+    },
     attempts: [
       JSON.stringify({
         objectiveIndex: state.currentObjectiveIndex,
