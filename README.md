@@ -28,8 +28,8 @@ The system is a Next.js app with a LangGraph agent backend and CopilotKit AG-UI 
 ### Data flow
 
 1. User uploads PDF → `/api/upload` extracts text, stores in Postgres, returns `documentId`
-2. Frontend calls `useCoAgent.setState({ documentId })` + `start()` → agent runs
-3. `loadDocument` node fetches `extractedText` from Postgres
+2. Frontend sets `documentId` in coagent state + sends `__start__` message → agent runs
+3. Agent uses `extractedText` from upload response (stored in state)
 4. `generatePlan` → `planApproval` (interrupt) → user edits/approves plan in `PlanApproval` modal
 5. `writeConceptGraph` writes prerequisite edges to Neo4j
 6. Quiz loop: `generateMCQ` → `selfEval` → `presentQuestion` (interrupt) → `grading` → `hint`/`advance`
@@ -37,14 +37,25 @@ The system is a Next.js app with a LangGraph agent backend and CopilotKit AG-UI 
 
 ### Environment variables
 
+Create `.env.local` at `ai-lesson-agent/.env.local`:
+
 ```
-DATABASE_URL=          # Postgres (Supabase)
-NEO4J_URI=             # Neo4j Aura
-NEO4J_USERNAME=
-NEO4J_PASSWORD=
-NEO4J_DATABASE=
-ANTHROPIC_API_KEY=
-LANGGRAPH_DEPLOYMENT_URL=http://localhost:3000/api/langgraph
+# Supabase session pooler (port 5432) — Settings → Database → Connection string → Session pooler
+DATABASE_URL=postgresql://postgres.[project-ref]:[password]@aws-0-[region].pooler.supabase.com:5432/postgres
+
+# Neo4j Aura
+NEO4J_URI=neo4j+s://[id].databases.neo4j.io
+NEO4J_USERNAME=neo4j
+NEO4J_PASSWORD=your-neo4j-password
+NEO4J_DATABASE=neo4j
+AURA_INSTANCEID=[id]
+AURA_INSTANCENAME=Instance01
+
+# Anthropic
+ANTHROPIC_API_KEY=sk-ant-...
+
+# CopilotKit Cloud
+COPILOT_CLOUD_PUBLIC_API_KEY=cpk-...
 ```
 
 ### Running locally

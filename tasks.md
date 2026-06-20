@@ -119,9 +119,9 @@ npm install -D @types/pg
 - [x] **Interrupt resume** — `resume()` helper in `page.tsx` POSTs `{ command: { resume } }` to `/api/langgraph/threads/:id/runs/stream` directly, drains SSE, then GETs `/threads/:id/state` to sync React state; bypasses CopilotKit interrupt hooks entirely (required — hooks only render inside `CopilotChat` UI)
 - [x] **LangGraph HTTP adapter** — `src/app/api/langgraph/[...path]/route.ts`; implements full LangGraph Platform HTTP API surface needed by `@langchain/langgraph-sdk` Client: `POST /assistants/search`, `GET /assistants/:id`, `GET /assistants/:id/schemas`, `GET /assistants/:id/graph`, `GET|POST /threads`, `GET /threads/:id`, `GET /threads/:id/state`, `PUT /threads/:id/state`, `POST /threads/:id/runs/stream`
 - [ ] **`useCopilotChat` sendMessage** — currently using deprecated `appendMessage` alias; upgrade path: once interrupt resume proven stable, consider triggering agent via state rather than chat message
-- [ ] **Hint display** — render hint/explanation inline in the quiz UI when returned from Tutor Agent (Tutor Agent node exists; UI not wired)
+- [x] **Hint display** — render hint/explanation inline in the quiz UI when returned from Tutor Agent (Tutor Agent node exists; UI not wired)
 - [ ] **Score/recap screen** — render completion node output (per-objective `correct`/`revealed` breakdown + study tips)
-- [ ] **End-to-end smoke test** — plan approval modal confirmed rendering ✓; resume was posting to wrong thread (CopilotKit threadId ≠ LangGraph threadId) — fixed via `GET /api/langgraph/active-thread`; quiz flow after approval not yet confirmed
+- [x] **End-to-end smoke test** — plan approval ✓, quiz loop ✓ (hints shown, start-over works); known bug: hint content may misalign with selected answer — investigate tutor node
 
 ---
 

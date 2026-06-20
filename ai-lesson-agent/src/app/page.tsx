@@ -10,6 +10,7 @@ import { GraphStateType } from "@/agent/state";
 
 export default function Home() {
   const [documentId, setDocumentId] = useState<string | null>(null);
+  const [resuming, setResuming] = useState(false);
 
   // ponytail: appendMessage is deprecated but sendMessage requires Enterprise license
   const { appendMessage: sendMessage } = useCopilotChat();
@@ -49,24 +50,29 @@ export default function Home() {
     const { thread_id: lgThreadId } = await activeRes.json();
     if (!lgThreadId) return;
 
-    const res = await fetch(`/api/langgraph/threads/${lgThreadId}/runs/stream`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ command: { resume: resumeValue } }),
-    });
-    // drain the SSE stream
-    const reader = res.body?.getReader();
-    if (reader) {
-      while (true) {
-        const { done } = await reader.read();
-        if (done) break;
+    setResuming(true);
+    try {
+      const res = await fetch(`/api/langgraph/threads/${lgThreadId}/runs/stream`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ command: { resume: resumeValue } }),
+      });
+      // drain the SSE stream
+      const reader = res.body?.getReader();
+      if (reader) {
+        while (true) {
+          const { done } = await reader.read();
+          if (done) break;
+        }
       }
-    }
-    // sync final graph state back into coagent state
-    const stateRes = await fetch(`/api/langgraph/threads/${lgThreadId}/state`);
-    if (stateRes.ok) {
-      const graphState = await stateRes.json();
-      if (graphState?.values) setState(() => graphState.values as GraphStateType);
+      // sync final graph state back into coagent state
+      const stateRes = await fetch(`/api/langgraph/threads/${lgThreadId}/state`);
+      if (stateRes.ok) {
+        const graphState = await stateRes.json();
+        if (graphState?.values) setState(() => graphState.values as GraphStateType);
+      }
+    } finally {
+      setResuming(false);
     }
   }, [setState]);
 
@@ -135,10 +141,16 @@ export default function Home() {
       {showQuiz && (() => {
         try {
           const { question, choices } = JSON.parse(state.currentQuestion);
+          const lastMsg = state.messages?.findLast(
+            (m: { role: string; content: string }) => m.role === "assistant"
+          );
+          const hint = lastMsg ? String(lastMsg.content) : undefined;
           return (
             <QuizQuestion
               question={question}
               choices={choices}
+              hint={hint}
+              loading={resuming}
               onSelect={handleQuizAnswer}
             />
           );

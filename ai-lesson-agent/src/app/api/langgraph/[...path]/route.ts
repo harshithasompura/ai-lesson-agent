@@ -132,6 +132,8 @@ export async function POST(
   // POST /api/langgraph/threads/:id/runs/stream
   if (path[0] === "threads" && path[2] === "runs" && path[3] === "stream") {
     const threadId = path[1];
+    // CopilotKit may skip POST /threads and go straight here — capture thread ID either way
+    latestThreadId = threadId;
     const body = await req.json().catch(() => ({}));
     const { input, config: runConfig, stream_mode, command } = body as {
       input?: Record<string, unknown>;
