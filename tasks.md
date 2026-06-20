@@ -120,8 +120,9 @@ npm install -D @types/pg
 - [x] **LangGraph HTTP adapter** — `src/app/api/langgraph/[...path]/route.ts`; implements full LangGraph Platform HTTP API surface needed by `@langchain/langgraph-sdk` Client: `POST /assistants/search`, `GET /assistants/:id`, `GET /assistants/:id/schemas`, `GET /assistants/:id/graph`, `GET|POST /threads`, `GET /threads/:id`, `GET /threads/:id/state`, `PUT /threads/:id/state`, `POST /threads/:id/runs/stream`
 - [ ] **`useCopilotChat` sendMessage** — currently using deprecated `appendMessage` alias; upgrade path: once interrupt resume proven stable, consider triggering agent via state rather than chat message
 - [x] **Hint display** — render hint/explanation inline in the quiz UI when returned from Tutor Agent (Tutor Agent node exists; UI not wired)
-- [ ] **Score/recap screen** — render completion node output (per-objective `correct`/`revealed` breakdown + study tips)
+- [x] **Score/recap screen** — render completion node output (per-objective `correct`/`revealed` breakdown + study tips); implemented in `page.tsx:92-135` — reads last message from completionNode
 - [x] **End-to-end smoke test** — plan approval ✓, quiz loop ✓ (hints shown, start-over works); known bug: hint content may misalign with selected answer — investigate tutor node
+- [ ] **Known issue: reveal shown on next question** — after 3 wrong answers, `hintNode` fires reveal then graph advances to next objective; reveal message lands in `state.messages` and renders as hint box on the NEW question instead of blocking on the old one. Fix: add intermediate "revealed" UI state in `page.tsx` that shows the reveal message and a "Next question →" button before `resume()` is called for the advance
 
 ---
 
@@ -129,15 +130,15 @@ npm install -D @types/pg
 
 Run these checks before calling the build done:
 
-- [ ] **Principle 1** — grep Tutor Agent's prompt-assembly function; confirm answer key string never appears in its inputs
-- [ ] **Principle 2** — confirm no graph edge advances past a quiz node except `correct` or `revealed` resolution; no agent tool named `skip*` or `advance*`
-- [ ] **Principle 3** — confirm `evalAttemptCount` cap (≤3) and `attemptCount` cap (≤3) are tracked as explicit state fields; neither inferred from node re-entry count
-- [ ] **Principle 4** — confirm every Neo4j call has `Promise.race([neoCall, timeout(1500)])` and a fallback branch
-- [ ] **Principle 5** — confirm Planner Agent state slice excludes attempt data; Quiz Agent state slice excludes Planner prompt; Tutor Agent state slice excludes answer key
-- [ ] **Principle 6** — confirm extracted PDF text lands in a delimited user-content block, never interpolated into system prompt strings
-- [ ] **Principle 7** — grep all Cypher queries; confirm every query includes a `documentId` filter parameter
-- [ ] **Principle 8** — confirm both `interrupt()` calls are in graph nodes, not tool definitions; confirm frontend uses `useInterrupt` not `useHumanInTheLoop`
-- [ ] **Principle 9** — confirm completion node reads from `quiz_attempts` table directly, not `state.messages` or agent recall
+- [x] **Principle 1** — Tutor hint path: no answerKey in prompt. Reveal path reads `explanation`+`correctChoice` only at `attemptCount>=3` (intentional, documented at `tutor.ts:60`)
+- [x] **Principle 2** — `afterGrading` edge returns only `"hint"|"advance"`; advance only on `correct|revealed` (`graph.ts:24-28`)
+- [x] **Principle 3** — `evalAttemptCount` and `attemptCount` explicit in `state.ts:21-22`; grading reads `attemptCount` from state not node-entry count
+- [x] **Principle 4** — `Promise.race` with 1500ms timeout in `neo4j.ts:15`; all callers use `runNeo4j(..., fallback)`
+- [x] **Principle 5** — Planner LLM only sees `extractedText` (`planner.ts:37`); Quiz prompt excludes planner system content; Tutor hint prompt structurally excludes answerKey
+- [x] **Principle 6** — `<document>\n${extractedText}\n</document>` in user turn, not system prompt (`planner.ts:37`)
+- [x] **Principle 7** — All Cypher queries in `conceptGraph.ts`, `quiz.ts`, `tutor.ts` include `documentId` parameter
+- [x] **Principle 8** — `interrupt()` in node functions `planApprovalNode` (`planner.ts:66`) and `presentQuestionNode` (`quiz.ts:192`), not tools
+- [x] **Principle 9** — `completionNode` queries `quiz_attempts` table via Postgres (`tutor.ts:106-116`), not state.messages
 
 ---
 

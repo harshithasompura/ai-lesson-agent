@@ -188,14 +188,16 @@ export async function presentQuestionNode(
   const objective = state.objectives[state.currentObjectiveIndex];
   const { question, choices } = JSON.parse(state.currentQuestion);
 
-  // Resume value wrapped as { selectedIndex } to avoid LangGraph EmptyInputError when index is 0
-  const { selectedIndex }: { selectedIndex: number } = interrupt({
+  const raw = interrupt({
     type: "quizAnswer",
     objective,
     question,
     choices,
     attemptCount: state.attemptCount,
   });
+  // interrupt() may return the resume value as a JSON string (when Command({ resume: string }) is used)
+  const { selectedIndex }: { selectedIndex: number } =
+    typeof raw === "string" ? JSON.parse(raw) : raw;
 
   return { pendingAnswer: selectedIndex };
 }

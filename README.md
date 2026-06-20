@@ -18,7 +18,7 @@ The system is a Next.js app with a LangGraph agent backend and CopilotKit AG-UI 
 | `src/agent/tutor.ts` | Hint and completion/recap nodes |
 | `src/agent/conceptGraph.ts` | Neo4j prerequisite edge writer |
 | `src/app/api/langgraph/[...path]/route.ts` | LangGraph HTTP adapter (exposes local graph to CopilotKit) |
-| `src/app/api/copilotkit/route.ts` | CopilotKit runtime endpoint |
+| `src/app/api/copilotkit/[[...slug]]/route.ts` | CopilotKit runtime endpoint |
 | `src/app/api/upload/route.ts` | PDF upload + text extraction |
 | `src/components/CopilotProvider.tsx` | Client-side CopilotKit context provider |
 | `src/components/PlanApproval.tsx` | Interrupt-driven plan review UI |
@@ -63,6 +63,10 @@ COPILOT_CLOUD_PUBLIC_API_KEY=cpk-...
 ```bash
 cd ai-lesson-agent
 npm install
+
+# Run DB migrations once (provisions Postgres tables + LangGraph checkpoint tables)
+npx tsx scripts/migrate.ts
+
 npm run dev
 ```
 

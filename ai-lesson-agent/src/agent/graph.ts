@@ -25,7 +25,14 @@ function afterGrading(state: GraphStateType): "hint" | "advance" {
   const last = state.attempts.at(-1);
   if (!last) return "hint";
   const { resolution } = JSON.parse(last);
-  return resolution === "correct" || resolution === "revealed" ? "advance" : "hint";
+  // "correct" skips hint entirely; "revealed" and null both go to hint
+  // (hintNode handles reveal when attemptCount >= 3, then afterHint advances)
+  return resolution === "correct" ? "advance" : "hint";
+}
+
+function afterHint(state: GraphStateType): "presentQuestion" | "advance" {
+  // After a reveal (3rd wrong answer), hintNode ran — now advance to next objective
+  return state.attemptCount >= 3 ? "advance" : "presentQuestion";
 }
 
 function afterSelectObjective(
@@ -100,7 +107,10 @@ const workflow = new StateGraph(GraphState)
     hint: "hint",
     advance: "advance",
   })
-  .addEdge("hint", "presentQuestion")
+  .addConditionalEdges("hint", afterHint, {
+    presentQuestion: "presentQuestion",
+    advance: "advance",
+  })
   .addEdge("advance", "selectNextObjective")
   .addEdge("completion", END);
 

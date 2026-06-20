@@ -142,7 +142,8 @@ export default function Home() {
         try {
           const { question, choices } = JSON.parse(state.currentQuestion);
           const lastMsg = state.messages?.findLast(
-            (m: { role: string; content: string }) => m.role === "assistant"
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            (m: any) => m._getType?.() === "ai" || m.role === "assistant"
           );
           const hint = lastMsg ? String(lastMsg.content) : undefined;
           return (

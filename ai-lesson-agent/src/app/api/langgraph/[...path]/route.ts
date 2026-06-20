@@ -166,7 +166,8 @@ export async function POST(
             ? new Command({ resume: command.resume })
             : (input ?? null);
 
-          const graphStream = graph.streamEvents(streamInput, {
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          const graphStream = await (graph.streamEvents as any)(streamInput, {
             version: "v2",
             ...(runConfig ?? {}),
             // thread_id must always win — runConfig.configurable must not override it
