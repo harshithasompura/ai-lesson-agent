@@ -106,18 +106,22 @@ npm install -D @types/pg
 
 ### 5f — Graph wiring
 - [x] **Graph assembly** — `src/agent/graph.ts`; wire all nodes with `StateGraph`, attach `PostgresSaver` as checkpointer, export compiled graph
-- [ ] **Use `graph.stream()`** — not `graph.invoke()`; read `__interrupt__` key from chunks (PLAN.md §8 watchpoints) — deferred to Phase 6 CopilotKit runtime integration
+- [x] **Use `graph.streamEvents()`** — switched from `graph.stream(streamMode:"values")` to `graph.streamEvents({ version: "v2" })`; emits LangChain event format consumed by `@ag-ui/langgraph` SDK; `Command({ resume })` used for interrupt resume
 
 ---
 
 ## Phase 6 — CopilotKit runtime + frontend
 
-- [ ] **CopilotKit route** — `app/api/copilotkit/route.ts`; `CopilotRuntime` with LangGraph agent registered; `agentId` must exactly match what `useInterrupt` uses on the frontend (PLAN.md §8 watchpoint)
-- [ ] **`<CopilotKit>` provider** — wrap `app/layout.tsx` with `<CopilotKit runtimeUrl="/api/copilotkit">`
-- [ ] **Plan-approval UI** — `src/components/PlanApproval.tsx`; `useInterrupt({ agentId, enabled: e => e.type === "approval", render: ({event, resolve}) => ... })`; editable text area for objectives; `resolve(editedPlan)` on submit
-- [ ] **Quiz UI** — `src/components/QuizQuestion.tsx`; `useInterrupt({ agentId, enabled: e => e.type === "quizAnswer", render: ... })`; render MCQ choices; `resolve(selectedIndex)` on selection
-- [ ] **Hint display** — render hint/explanation inline in the quiz UI when returned from Tutor Agent
+- [x] **CopilotKit route** — `app/api/copilotkit/[[...slug]]/route.ts`; `CopilotRuntime` with `LangGraphAgent` registered; switched to `createCopilotHonoHandler` (`@copilotkit/runtime/v2/hono`) with `mode: "multi-route"` so GET `/threads` resolves (was 405 with single-route mode)
+- [x] **`<CopilotKit>` provider** — `src/components/CopilotProvider.tsx` wraps children with `<CopilotKit runtimeUrl="/api/copilotkit" agent="ai-lesson-agent">`; imported in `app/layout.tsx`
+- [x] **Plan-approval UI** — `src/components/PlanApproval.tsx`; pure controlled component `({ plan, onApprove })`; rendered from `page.tsx` when `state.plan && !state.planApproved && !running`
+- [x] **Quiz UI** — `src/components/QuizQuestion.tsx`; pure controlled component `({ question, choices, onSelect })`; rendered from `page.tsx` when `state.planApproved && state.currentQuestion && !running`
+- [x] **Interrupt resume** — `resume()` helper in `page.tsx` POSTs `{ command: { resume } }` to `/api/langgraph/threads/:id/runs/stream` directly, drains SSE, then GETs `/threads/:id/state` to sync React state; bypasses CopilotKit interrupt hooks entirely (required — hooks only render inside `CopilotChat` UI)
+- [x] **LangGraph HTTP adapter** — `src/app/api/langgraph/[...path]/route.ts`; implements full LangGraph Platform HTTP API surface needed by `@langchain/langgraph-sdk` Client: `POST /assistants/search`, `GET /assistants/:id`, `GET /assistants/:id/schemas`, `GET /assistants/:id/graph`, `GET|POST /threads`, `GET /threads/:id`, `GET /threads/:id/state`, `PUT /threads/:id/state`, `POST /threads/:id/runs/stream`
+- [ ] **`useCopilotChat` sendMessage** — currently using deprecated `appendMessage` alias; upgrade path: once interrupt resume proven stable, consider triggering agent via state rather than chat message
+- [ ] **Hint display** — render hint/explanation inline in the quiz UI when returned from Tutor Agent (Tutor Agent node exists; UI not wired)
 - [ ] **Score/recap screen** — render completion node output (per-objective `correct`/`revealed` breakdown + study tips)
+- [ ] **End-to-end smoke test** — plan approval modal confirmed rendering ✓; resume was posting to wrong thread (CopilotKit threadId ≠ LangGraph threadId) — fixed via `GET /api/langgraph/active-thread`; quiz flow after approval not yet confirmed
 
 ---
 

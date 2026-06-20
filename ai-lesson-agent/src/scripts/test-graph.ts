@@ -49,7 +49,7 @@ async function main() {
     `INSERT INTO documents (filename, extracted_text) VALUES ($1, $2) RETURNING id`,
     ["smoke-test.txt", EXTRACTED_TEXT]
   );
-  const DOCUMENT_ID: number = rows[0].id;
+  const DOCUMENT_ID: string = String(rows[0].id);
   console.log(`documentId: ${DOCUMENT_ID}  threadId: ${THREAD_ID}`);
 
   // 1. Init checkpointer tables

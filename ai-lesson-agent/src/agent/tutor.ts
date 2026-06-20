@@ -15,7 +15,7 @@ const HintSchema = z.object({
 const tutorModel = new ChatAnthropic({
   model: "claude-haiku-4-5-20251001",
   temperature: 0.3,
-}).withStructuredOutput(HintSchema);
+}).withStructuredOutput(HintSchema, { method: "jsonMode" });
 
 // ── Prompts ────────────────────────────────────────────────────────────────
 
@@ -27,7 +27,8 @@ Rules:
 - Hint must nudge thinking, not give the answer away
 - Reference the learning objective
 - Keep hint to 1-2 sentences
-- Do not repeat the question back verbatim`;
+- Do not repeat the question back verbatim
+- Respond with a JSON object: {"hint": string}`;
 
 const REVEAL_SYSTEM = `You are a Tutor Agent. A student has exhausted their attempts on a quiz question.
 Your job is to give a clear, educational explanation of the correct answer.

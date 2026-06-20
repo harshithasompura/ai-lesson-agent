@@ -26,35 +26,30 @@ type MCQ = z.infer<typeof MCQSchema>;
 const quizModel = new ChatAnthropic({
   model: "claude-sonnet-4-6",
   temperature: 0.7, // slight variance for MCQ quality
-}).withStructuredOutput(MCQSchema);
+}).withStructuredOutput(MCQSchema, { method: "jsonMode" });
 
 const evalModel = new ChatAnthropic({
   model: "claude-haiku-4-5-20251001",
   temperature: 0,
-}).withStructuredOutput(EvalSchema);
+}).withStructuredOutput(EvalSchema, { method: "jsonMode" });
 
 // ── Prompts ────────────────────────────────────────────────────────────────
 
 const QUIZ_SYSTEM = `You are the Quiz Agent. Your job is to write one multiple-choice question (MCQ) for a given learning objective.
 
-Output exactly:
-- question: a clear, specific question testing the objective
-- choices: exactly 4 options (one correct, three plausible but wrong)
-- correctIndex: 0-based index of the correct choice
-- explanation: why the correct answer is correct (used for revealing after cap, never shown proactively)
-
 Rules:
 - One unambiguously correct answer only
 - Distractors must be plausible — not obviously wrong
 - Question must directly test the stated objective
-- Do not include "all of the above" or "none of the above"`;
+- Do not include "all of the above" or "none of the above"
+- Respond with a JSON object: {"question": string, "choices": [string, string, string, string], "correctIndex": number, "explanation": string}`;
 
 const EVAL_SYSTEM = `You are a MCQ quality evaluator. Score the question on a 0–5 scale:
 - 5: unambiguous correct answer, all distractors plausible, directly tests the objective
 - 3–4: minor issues (slightly ambiguous, one weak distractor)
 - 0–2: serious issues (ambiguous answer, trivial distractors, objective drift)
 
-Return score and a one-sentence critique. Be strict — a 3 is a borderline pass.`;
+Be strict — a 3 is a borderline pass. Respond with a JSON object: {"score": number, "critique": string}`;
 
 const EVAL_PASS_THRESHOLD = 3;
 

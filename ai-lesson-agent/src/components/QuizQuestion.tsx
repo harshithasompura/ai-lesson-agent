@@ -1,9 +1,6 @@
 "use client";
-import { useLangGraphInterrupt } from "@copilotkit/react-core";
 
-type QuizEvent = { type: "quizAnswer"; objective: string; question: string; choices: string[] };
-
-function QuizCard({
+export function QuizQuestion({
   question,
   choices,
   onSelect,
@@ -31,19 +28,4 @@ function QuizCard({
       </div>
     </div>
   );
-}
-
-export function QuizQuestion() {
-  useLangGraphInterrupt<QuizEvent>({
-    agentId: "ai-lesson-agent",
-    enabled: ({ eventValue }) => eventValue.type === "quizAnswer",
-    render: ({ event, resolve }) => (
-      <QuizCard
-        question={event.value.question}
-        choices={event.value.choices}
-        onSelect={(i) => resolve(JSON.stringify({ selectedIndex: i }))}
-      />
-    ),
-  });
-  return null;
 }

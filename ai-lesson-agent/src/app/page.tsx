@@ -1,7 +1,8 @@
 "use client";
 
-import { useState } from "react";
-import { useCoAgent } from "@copilotkit/react-core";
+import { useState, useCallback } from "react";
+import { useCoAgent, useCopilotChat } from "@copilotkit/react-core";
+import { TextMessage, Role } from "@copilotkit/runtime-client-gql";
 import UploadForm from "@/components/UploadForm";
 import { PlanApproval } from "@/components/PlanApproval";
 import { QuizQuestion } from "@/components/QuizQuestion";
@@ -10,7 +11,9 @@ import { GraphStateType } from "@/agent/state";
 export default function Home() {
   const [documentId, setDocumentId] = useState<string | null>(null);
 
-  const { state, setState, start, running } = useCoAgent<GraphStateType>({
+  // ponytail: appendMessage is deprecated but sendMessage requires Enterprise license
+  const { appendMessage: sendMessage } = useCopilotChat();
+  const { state, setState, running } = useCoAgent<GraphStateType>({
     name: "ai-lesson-agent",
     initialState: {
       documentId: "",
@@ -33,8 +36,52 @@ export default function Home() {
   function handleUpload(id: string) {
     setDocumentId(id);
     setState((prev) => ({ ...prev!, documentId: id, extractedText: "" }));
-    start();
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    sendMessage(new TextMessage({ id: crypto.randomUUID(), content: "__start__", role: Role.User }));
   }
+
+  // Resume a LangGraph interrupt by POSTing command.resume directly to our adapter,
+  // then syncing the resulting state back into React via setState.
+  // Note: useCopilotContext().threadId is the CopilotKit thread, not the LangGraph thread.
+  // We fetch the active LangGraph thread from our adapter instead.
+  const resume = useCallback(async (resumeValue: string) => {
+    const activeRes = await fetch("/api/langgraph/active-thread");
+    const { thread_id: lgThreadId } = await activeRes.json();
+    if (!lgThreadId) return;
+
+    const res = await fetch(`/api/langgraph/threads/${lgThreadId}/runs/stream`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ command: { resume: resumeValue } }),
+    });
+    // drain the SSE stream
+    const reader = res.body?.getReader();
+    if (reader) {
+      while (true) {
+        const { done } = await reader.read();
+        if (done) break;
+      }
+    }
+    // sync final graph state back into coagent state
+    const stateRes = await fetch(`/api/langgraph/threads/${lgThreadId}/state`);
+    if (stateRes.ok) {
+      const graphState = await stateRes.json();
+      if (graphState?.values) setState(() => graphState.values as GraphStateType);
+    }
+  }, [setState]);
+
+  const handlePlanApprove = useCallback(async (text: string) => {
+    let parsed: unknown;
+    try { parsed = JSON.parse(text); } catch { parsed = text; }
+    await resume(JSON.stringify(parsed));
+  }, [resume]);
+
+  const handleQuizAnswer = useCallback(async (index: number) => {
+    await resume(JSON.stringify({ selectedIndex: index }));
+  }, [resume]);
+
+  const showPlanApproval = documentId && !running && state.plan && !state.planApproved;
+  const showQuiz = documentId && !running && state.planApproved && state.currentQuestion;
 
   const isComplete =
     documentId &&
@@ -81,9 +128,24 @@ export default function Home() {
         </div>
       )}
 
-      {/* Interrupt-driven components — always mounted when agent running */}
-      {documentId && <PlanApproval />}
-      {documentId && <QuizQuestion />}
+      {showPlanApproval && (
+        <PlanApproval plan={state.plan} onApprove={handlePlanApprove} />
+      )}
+
+      {showQuiz && (() => {
+        try {
+          const { question, choices } = JSON.parse(state.currentQuestion);
+          return (
+            <QuizQuestion
+              question={question}
+              choices={choices}
+              onSelect={handleQuizAnswer}
+            />
+          );
+        } catch {
+          return null;
+        }
+      })()}
     </main>
   );
 }

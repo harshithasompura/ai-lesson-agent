@@ -13,7 +13,7 @@ type Plan = z.infer<typeof PlanSchema>;
 const model = new ChatAnthropic({
   model: "claude-sonnet-4-6",
   temperature: 0,
-}).withStructuredOutput(PlanSchema);
+}).withStructuredOutput(PlanSchema, { method: "jsonMode" });
 
 const SYSTEM_PROMPT = `You are a lesson Planner Agent. Your only job is to analyze a PDF document and produce a structured lesson plan.
 
@@ -24,20 +24,27 @@ Rules:
 - A prerequisite edge {from: A, to: B} means "A must be understood before B".
 - Produce between 3 and 8 objectives for a typical document.
 - Do not include quiz questions, answer keys, or student performance data.
-- Do not produce any output beyond the structured fields.`;
+- Respond with a JSON object matching this schema: {"objectives": string[], "prerequisites": [{"from": string, "to": string}]}`;
 
 export async function generatePlanNode(
   state: GraphStateType
 ): Promise<Partial<GraphStateType>> {
-  // CONSTITUTION §Principle 5: only extractedText goes into this prompt — no attempts, no answer keys
-  const plan: Plan = await model.invoke([
-    { role: "system", content: SYSTEM_PROMPT },
+  const messages = [
+    { role: "system" as const, content: SYSTEM_PROMPT },
     {
-      role: "user",
-      // CONSTITUTION §Principle 6: document content in user turn, structurally separate from system prompt
+      role: "user" as const,
+      // CONSTITUTION §Principle 5/6: only extractedText, in user turn
       content: `<document>\n${state.extractedText}\n</document>\n\nProduce the lesson plan for this document.`,
     },
-  ]);
+  ];
+
+  // Retry once — streamEvents-driven invocation occasionally returns empty tool args
+  let plan: Plan;
+  try {
+    plan = await model.invoke(messages);
+  } catch {
+    plan = await model.invoke(messages);
+  }
 
   return {
     objectives: plan.objectives,
