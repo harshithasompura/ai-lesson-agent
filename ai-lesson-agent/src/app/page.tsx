@@ -8,11 +8,66 @@ import { PlanApproval } from "@/components/PlanApproval";
 import { QuizQuestion } from "@/components/QuizQuestion";
 import { GraphStateType } from "@/agent/state";
 
+type Step = "upload" | "plan" | "quiz";
+
+function StepRail({ current }: { current: Step }) {
+  const steps: { id: Step; label: string }[] = [
+    { id: "upload", label: "Upload" },
+    { id: "plan", label: "Plan" },
+    { id: "quiz", label: "Quiz" },
+  ];
+  const order: Step[] = ["upload", "plan", "quiz"];
+  const currentIdx = order.indexOf(current);
+
+  return (
+    <div className="flex items-center gap-0 mb-10">
+      {steps.map((step, i) => {
+        const done = i < currentIdx;
+        const active = i === currentIdx;
+        return (
+          <div key={step.id} className="flex items-center">
+            <div className="flex flex-col items-center gap-1">
+              <div
+                className={[
+                  "w-8 h-8 rounded-full flex items-center justify-center text-sm font-semibold transition-colors",
+                  done ? "bg-teal-600 text-white" : active ? "bg-teal-600 text-white ring-4 ring-teal-100" : "bg-stone-200 text-stone-400",
+                ].join(" ")}
+              >
+                {done ? (
+                  <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+                  </svg>
+                ) : (
+                  i + 1
+                )}
+              </div>
+              <span className={["text-xs font-medium", active ? "text-teal-700" : done ? "text-teal-600" : "text-stone-400"].join(" ")}>
+                {step.label}
+              </span>
+            </div>
+            {i < steps.length - 1 && (
+              <div className={["h-0.5 w-16 mx-2 mb-4 transition-colors", i < currentIdx ? "bg-teal-600" : "bg-stone-200"].join(" ")} />
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function Spinner() {
+  return (
+    <svg className="w-6 h-6 text-teal-600 animate-spin" fill="none" viewBox="0 0 24 24">
+      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+    </svg>
+  );
+}
+
 export default function Home() {
   const [documentId, setDocumentId] = useState<string | null>(null);
   const [resuming, setResuming] = useState(false);
 
-  // ponytail: appendMessage is deprecated but sendMessage requires Enterprise license
   const { appendMessage: sendMessage } = useCopilotChat();
   const { state, setState, running } = useCoAgent<GraphStateType>({
     name: "ai-lesson-agent",
@@ -41,10 +96,6 @@ export default function Home() {
     sendMessage(new TextMessage({ id: crypto.randomUUID(), content: "__start__", role: Role.User }));
   }
 
-  // Resume a LangGraph interrupt by POSTing command.resume directly to our adapter,
-  // then syncing the resulting state back into React via setState.
-  // Note: useCopilotContext().threadId is the CopilotKit thread, not the LangGraph thread.
-  // We fetch the active LangGraph thread from our adapter instead.
   const resume = useCallback(async (resumeValue: string) => {
     const activeRes = await fetch("/api/langgraph/active-thread");
     const { thread_id: lgThreadId } = await activeRes.json();
@@ -57,7 +108,6 @@ export default function Home() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ command: { resume: resumeValue } }),
       });
-      // drain the SSE stream
       const reader = res.body?.getReader();
       if (reader) {
         while (true) {
@@ -65,7 +115,6 @@ export default function Home() {
           if (done) break;
         }
       }
-      // sync final graph state back into coagent state
       const stateRes = await fetch(`/api/langgraph/threads/${lgThreadId}/state`);
       if (stateRes.ok) {
         const graphState = await stateRes.json();
@@ -103,62 +152,109 @@ export default function Home() {
         : null
       : null;
 
+  // derive active step for the rail
+  const activeStep: Step = !documentId ? "upload" : showPlanApproval ? "plan" : "quiz";
+
   return (
-    <main className="flex min-h-screen flex-col items-center justify-center bg-zinc-50 dark:bg-black p-8">
-      <h1 className="text-2xl font-semibold mb-8 text-zinc-900 dark:text-zinc-50">
-        AI Lesson Agent
-      </h1>
-
-      {!documentId && <UploadForm onUpload={handleUpload} />}
-
-      {documentId && running && !state.planApproved && (
-        <p className="text-zinc-500 animate-pulse">Generating lesson plan…</p>
-      )}
-
-      {documentId && running && state.planApproved && (
-        <p className="text-zinc-500 animate-pulse">
-          Quiz in progress — objective {state.currentObjectiveIndex + 1} of{" "}
-          {state.objectives.length}
-        </p>
-      )}
-
-      {documentId && isComplete && recap && (
-        <div className="max-w-xl w-full bg-white dark:bg-zinc-900 rounded-lg p-6 shadow prose dark:prose-invert">
-          <pre className="whitespace-pre-wrap text-sm">{recap}</pre>
-          <button
-            className="mt-6 px-4 py-2 bg-zinc-800 text-white rounded hover:bg-zinc-700"
-            onClick={() => setDocumentId(null)}
-          >
-            Start over
-          </button>
+    <main className="min-h-screen flex flex-col items-center justify-center p-6 sm:p-10">
+      {/* Upload screen */}
+      {!documentId && (
+        <div className="w-full max-w-md animate-fade-in">
+          <div className="mb-8 text-center">
+            <div className="inline-flex items-center justify-center w-12 h-12 rounded-2xl bg-teal-600 mb-4">
+              <svg className="w-6 h-6 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253" />
+              </svg>
+            </div>
+            <h1 className="text-2xl font-bold text-stone-900">AI Lesson Agent</h1>
+            <p className="mt-1 text-stone-500 text-sm">Upload a PDF and get a personalized quiz</p>
+          </div>
+          <UploadForm onUpload={handleUpload} />
         </div>
       )}
 
-      {showPlanApproval && (
-        <PlanApproval plan={state.plan} onApprove={handlePlanApprove} />
-      )}
+      {/* Post-upload screens: show step rail */}
+      {documentId && (
+        <div className="w-full max-w-2xl animate-fade-in">
+          <StepRail current={activeStep} />
 
-      {showQuiz && (() => {
-        try {
-          const { question, choices } = JSON.parse(state.currentQuestion);
-          const lastMsg = state.messages?.findLast(
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            (m: any) => m._getType?.() === "ai" || m.role === "assistant"
-          );
-          const hint = lastMsg ? String(lastMsg.content) : undefined;
-          return (
-            <QuizQuestion
-              question={question}
-              choices={choices}
-              hint={hint}
-              loading={resuming}
-              onSelect={handleQuizAnswer}
-            />
-          );
-        } catch {
-          return null;
-        }
-      })()}
+          {/* Generating plan */}
+          {running && !state.planApproved && (
+            <div className="flex flex-col items-center gap-4 py-16">
+              <Spinner />
+              <p className="text-stone-600 text-sm">Analyzing your lesson and building a plan…</p>
+            </div>
+          )}
+
+          {/* Plan approval */}
+          {showPlanApproval && (
+            <PlanApproval plan={state.plan} onApprove={handlePlanApprove} />
+          )}
+
+          {/* Generating quiz / between questions */}
+          {(running && state.planApproved) || (resuming && state.planApproved && !showQuiz) ? (
+            <div className="flex flex-col items-center gap-4 py-16">
+              <Spinner />
+              <p className="text-stone-600 text-sm">
+                Preparing question {state.currentObjectiveIndex + 1} of {state.objectives.length}…
+              </p>
+            </div>
+          ) : null}
+
+          {/* Quiz */}
+          {showQuiz && (() => {
+            try {
+              const { question, choices } = JSON.parse(state.currentQuestion);
+              const lastMsg = state.messages?.findLast(
+                // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                (m: any) => m._getType?.() === "ai" || m.role === "assistant"
+              );
+              const hint = lastMsg ? String(lastMsg.content) : undefined;
+              return (
+                <QuizQuestion
+                  question={question}
+                  choices={choices}
+                  hint={hint}
+                  loading={resuming}
+                  objectiveIndex={state.currentObjectiveIndex}
+                  totalObjectives={state.objectives.length}
+                  onSelect={handleQuizAnswer}
+                />
+              );
+            } catch {
+              return null;
+            }
+          })()}
+
+          {/* Complete */}
+          {isComplete && (
+            <div className="animate-fade-in">
+              <div className="flex flex-col items-center gap-3 mb-8">
+                <div className="w-12 h-12 rounded-full bg-teal-600 flex items-center justify-center">
+                  <svg className="w-6 h-6 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+                  </svg>
+                </div>
+                <h2 className="text-xl font-semibold text-stone-900">Session complete</h2>
+                <p className="text-stone-500 text-sm">Here&apos;s a summary of what you covered</p>
+              </div>
+
+              {recap && (
+                <div className="bg-white border border-stone-200 rounded-xl p-6 text-sm text-stone-700 whitespace-pre-wrap leading-relaxed mb-6">
+                  {recap}
+                </div>
+              )}
+
+              <button
+                className="w-full py-3 rounded-xl bg-teal-600 text-white font-medium hover:bg-teal-700 transition-colors"
+                onClick={() => setDocumentId(null)}
+              >
+                Start a new lesson
+              </button>
+            </div>
+          )}
+        </div>
+      )}
     </main>
   );
 }

@@ -118,7 +118,6 @@ npm install -D @types/pg
 - [x] **Quiz UI** — `src/components/QuizQuestion.tsx`; pure controlled component `({ question, choices, onSelect })`; rendered from `page.tsx` when `state.planApproved && state.currentQuestion && !running`
 - [x] **Interrupt resume** — `resume()` helper in `page.tsx` POSTs `{ command: { resume } }` to `/api/langgraph/threads/:id/runs/stream` directly, drains SSE, then GETs `/threads/:id/state` to sync React state; bypasses CopilotKit interrupt hooks entirely (required — hooks only render inside `CopilotChat` UI)
 - [x] **LangGraph HTTP adapter** — `src/app/api/langgraph/[...path]/route.ts`; implements full LangGraph Platform HTTP API surface needed by `@langchain/langgraph-sdk` Client: `POST /assistants/search`, `GET /assistants/:id`, `GET /assistants/:id/schemas`, `GET /assistants/:id/graph`, `GET|POST /threads`, `GET /threads/:id`, `GET /threads/:id/state`, `PUT /threads/:id/state`, `POST /threads/:id/runs/stream`
-- [ ] **`useCopilotChat` sendMessage** — currently using deprecated `appendMessage` alias; upgrade path: once interrupt resume proven stable, consider triggering agent via state rather than chat message
 - [x] **Hint display** — render hint/explanation inline in the quiz UI when returned from Tutor Agent (Tutor Agent node exists; UI not wired)
 - [x] **Score/recap screen** — render completion node output (per-objective `correct`/`revealed` breakdown + study tips); implemented in `page.tsx:92-135` — reads last message from completionNode
 - [x] **End-to-end smoke test** — plan approval ✓, quiz loop ✓ (hints shown, start-over works); known bug: hint content may misalign with selected answer — investigate tutor node
@@ -160,3 +159,11 @@ Run these checks before calling the build done:
 
 - [ ] **README.md** — verify setup instructions are complete and accurate end-to-end: clone, `npm install`, `.env.local` vars, `npm run dev`
 - [ ] **AI_USAGE.md** — confirm all sessions have entries; no gaps
+
+---
+
+## Open threads from UI rework session (2026-06-20 evening)
+
+- [ ] **Reveal timing** — after 3 wrong answers, reveal message from `hintNode` should block on the current question (show "Here's the answer" + Next button) before advancing to next objective; currently advances immediately and reveal lands as hint on new question. Fix: add `revealed` UI state in `page.tsx` that renders reveal text + "Next question →" button, calls `resume()` only on click
+- [ ] **Phase 8 wiring verification** — grading row (`quiz_attempts` written to Postgres), Neo4j objective nodes, completion node recap — none verified end-to-end; run smoke tests
+- [ ] **Quiz progress bar off-by-one** — bar shows 0% on first question; `progress = objectiveIndex / totalObjectives` starts at 0/N; decide if bar should show attempt-based progress or start at non-zero
