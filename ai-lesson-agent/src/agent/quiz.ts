@@ -118,12 +118,21 @@ export async function generateMCQNode(
   const approvedPlan = state.plan;
 
   // CONSTITUTION §Principle 5: Quiz Agent sees approved plan + objective only
+  // Include any critique messages from prior self-eval attempts
+  const critiqueMessages = (state.messages ?? []).filter(
+    (m: { role: string; content: string }) =>
+      m.role === "assistant" && m.content?.startsWith("MCQ critique")
+  );
   const mcq: MCQ = await quizModel.invoke([
     { role: "system", content: QUIZ_SYSTEM },
     {
       role: "user",
       content: `Approved lesson plan:\n${approvedPlan}\n\nCurrent objective:\n${objective}\n\nWrite one MCQ for this objective.`,
     },
+    ...critiqueMessages,
+    ...(critiqueMessages.length > 0
+      ? [{ role: "user" as const, content: "Rewrite the MCQ addressing the critique above." }]
+      : []),
   ]);
 
   return {
