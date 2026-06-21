@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect } from "react";
 
 type Result = {
   isCorrect: boolean;
@@ -39,28 +39,30 @@ export function QuizQuestion({
   onContinue: () => void;
 }) {
   const [selected, setSelected] = useState<number | null>(null);
-  const [localHint, setLocalHint] = useState<string | undefined>(undefined);
-  const awaitingFeedback = useRef(false);
+  // showFeedback: true when a wrong-answer result panel should be visible.
+  // "Try again" dismisses it locally (no agent resume needed).
+  const [showFeedback, setShowFeedback] = useState(false);
 
+  // New question → reset all local state
   useEffect(() => {
     setSelected(null);
-    setLocalHint(undefined);
-    awaitingFeedback.current = false;
+    setShowFeedback(false);
   }, [question]);
 
+  // Wrong result arrived from agent → show feedback panel
   useEffect(() => {
-    if (hint && !loading && awaitingFeedback.current) {
-      setLocalHint(hint);
-      setSelected(null);
-      awaitingFeedback.current = false;
-    }
-  }, [hint, loading]);
+    if (result && !result.isCorrect) setShowFeedback(true);
+  }, [result]);
 
   function handleSelect(i: number) {
-    if (loading || selected !== null || result) return;
-    awaitingFeedback.current = true;
+    if (loading || selected !== null || showFeedback) return;
     setSelected(i);
     onSelect(i);
+  }
+
+  function handleTryAgain() {
+    setShowFeedback(false);
+    setSelected(null);
   }
 
   const progress = totalObjectives > 0 ? (objectiveIndex / totalObjectives) * 100 : 0;
@@ -86,10 +88,10 @@ export function QuizQuestion({
       {/* Choices */}
       <div className="space-y-2.5">
         {choices.map((choice, i) => {
-          // Result state — frozen choices with green/red
-          if (result) {
+          // Correct answer result: freeze choices, show green on correct + red on wrong pick
+          if (result?.isCorrect) {
             const isCorrectChoice = i === result.correctIndex;
-            const isWrongSelected = i === result.selectedIndex && !result.isCorrect;
+            const isWrongSelected = i === result.selectedIndex;
             const isDim = !isCorrectChoice && !isWrongSelected;
             return (
               <div
@@ -122,7 +124,35 @@ export function QuizQuestion({
             );
           }
 
-          // Normal quiz state
+          // Wrong-answer feedback visible: highlight only the wrong pick, others interactive-looking but blocked
+          if (showFeedback && result && !result.isCorrect) {
+            const isWrongSelected = i === result.selectedIndex;
+            return (
+              <div
+                key={i}
+                className={[
+                  "w-full text-left px-4 py-3.5 rounded-xl border-2 flex items-center gap-3",
+                  isWrongSelected
+                    ? "border-red-400 bg-red-50"
+                    : "border-stone-100 bg-stone-50 opacity-40",
+                ].join(" ")}
+              >
+                <span
+                  className={[
+                    "flex-shrink-0 w-7 h-7 rounded-lg flex items-center justify-center text-xs font-bold",
+                    isWrongSelected ? "bg-red-400 text-white" : "bg-stone-100 text-stone-400",
+                  ].join(" ")}
+                >
+                  {isWrongSelected ? "✗" : String.fromCharCode(65 + i)}
+                </span>
+                <span className={["text-sm", isWrongSelected ? "text-stone-800 font-medium" : "text-stone-400"].join(" ")}>
+                  {choice}
+                </span>
+              </div>
+            );
+          }
+
+          // Normal interactive state
           const isSelected = selected === i;
           const isLoading = isSelected && loading;
           return (
@@ -163,62 +193,40 @@ export function QuizQuestion({
       </div>
 
       {/* Result feedback */}
-      {result && (
-        <div className="mt-5">
-          {result.isCorrect ? (
-            <div className="p-4 bg-green-50 border border-green-200 rounded-xl">
-              <p className="font-semibold text-green-700 text-sm">Correct!</p>
-              {result.explanation && (
-                <p className="text-sm text-green-900 mt-1 leading-relaxed">{result.explanation}</p>
-              )}
-              <button
-                onClick={onContinue}
-                disabled={loading}
-                className="mt-3 w-full py-2.5 rounded-xl bg-teal-600 text-white font-medium hover:bg-teal-700 disabled:opacity-50 transition-colors text-sm"
-              >
-                {loading ? "Loading…" : "Next question →"}
-              </button>
-            </div>
-          ) : result.resolution === "revealed" ? (
-            <div className="p-4 bg-amber-50 border border-amber-200 rounded-xl">
-              <p className="font-semibold text-amber-700 text-sm">Here&apos;s the answer</p>
-              {result.explanation && (
-                <p className="text-sm text-amber-900 mt-1 leading-relaxed">{result.explanation}</p>
-              )}
-              <button
-                onClick={onContinue}
-                disabled={loading}
-                className="mt-3 w-full py-2.5 rounded-xl bg-teal-600 text-white font-medium hover:bg-teal-700 disabled:opacity-50 transition-colors text-sm"
-              >
-                {loading ? "Loading…" : "Continue →"}
-              </button>
-            </div>
-          ) : (
-            <div className="p-4 bg-red-50 border border-red-200 rounded-xl">
-              <p className="font-semibold text-red-700 text-sm">Not quite — give it another try</p>
-              <button
-                onClick={onContinue}
-                disabled={loading}
-                className="mt-3 w-full py-2.5 rounded-xl bg-stone-800 text-white font-medium hover:bg-stone-900 disabled:opacity-50 transition-colors text-sm"
-              >
-                {loading ? "Loading…" : "Try again →"}
-              </button>
-            </div>
-          )}
-        </div>
-      )}
-
-      {/* Hint (shown on retry, after result clears) */}
-      {!result && localHint && !loading && (
-        <div className="mt-5 p-4 bg-amber-50 border border-amber-200 rounded-xl text-sm text-amber-900 leading-relaxed">
-          <span className="font-semibold text-amber-700 mr-1">Hint:</span>
-          {renderInline(localHint)}
-        </div>
-      )}
-
-      {!result && loading && selected !== null && (
-        <p className="mt-4 text-xs text-stone-400 text-center animate-pulse">Checking your answer…</p>
-      )}
+      <div className="mt-5">
+        {result?.isCorrect ? (
+          <div className="p-4 bg-green-50 border border-green-200 rounded-xl">
+            <p className="font-semibold text-green-700 text-sm">Correct!</p>
+            {result.explanation && (
+              <p className="text-sm text-green-900 mt-1 leading-relaxed">{result.explanation}</p>
+            )}
+            <button
+              onClick={onContinue}
+              disabled={loading}
+              className="mt-3 w-full py-2.5 rounded-xl bg-teal-600 text-white font-medium hover:bg-teal-700 disabled:opacity-50 transition-colors text-sm"
+            >
+              {loading ? "Loading…" : "Next question →"}
+            </button>
+          </div>
+        ) : showFeedback ? (
+          <div className="p-4 bg-red-50 border border-red-200 rounded-xl">
+            <p className="font-semibold text-red-700 text-sm">Not quite — give it another try</p>
+            {hint && (
+              <p className="text-sm text-red-900 mt-2 leading-relaxed">
+                <span className="font-semibold">Hint: </span>{renderInline(hint)}
+              </p>
+            )}
+            <button
+              onClick={handleTryAgain}
+              className="mt-3 w-full py-2.5 rounded-xl bg-stone-800 text-white font-medium hover:bg-stone-900 transition-colors text-sm"
+            >
+              Try again →
+            </button>
+          </div>
+        ) : !result && loading && selected !== null ? (
+          <p className="text-xs text-stone-400 text-center animate-pulse">Checking your answer…</p>
+        ) : null}
+      </div>
     </div>
   );
 }

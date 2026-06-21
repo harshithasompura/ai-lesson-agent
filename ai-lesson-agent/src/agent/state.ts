@@ -32,6 +32,10 @@ export const GraphState = Annotation.Root({
     value: (_, next) => next,
     default: () => null,
   }),
+  lastHint: Annotation<string | null>({
+    value: (_, next) => next,
+    default: () => null,
+  }),
   attempts: Annotation<string[]>({
     reducer: (prev, next) => [...prev, ...next],
     default: () => [],

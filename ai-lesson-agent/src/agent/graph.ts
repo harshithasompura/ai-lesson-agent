@@ -22,16 +22,10 @@ function afterSelfEval(state: GraphStateType): "generateMCQ" | "presentQuestion"
   return state.currentQuestion ? "presentQuestion" : "generateMCQ";
 }
 
-function afterResult(state: GraphStateType): "hint" | "advance" {
-  const last = state.attempts.at(-1);
-  if (!last) return "advance";
-  const { resolution } = JSON.parse(last);
-  return resolution === "correct" ? "advance" : "hint";
-}
-
-function afterHint(state: GraphStateType): "presentQuestion" | "advance" {
-  // After a reveal (3rd wrong answer), hintNode ran — now advance to next objective
-  return state.attemptCount >= 3 ? "advance" : "presentQuestion";
+function afterGrading(state: GraphStateType): "hint" | "result" {
+  // Correct: pause at result node so user can acknowledge before advancing.
+  // Wrong: generate hint then loop back to presentQuestion (no extra interrupt).
+  return state.lastResult?.isCorrect ? "result" : "hint";
 }
 
 function afterSelectObjective(
@@ -56,6 +50,7 @@ async function advanceNode(
     evalAttemptCount: 0,
     pendingAnswer: null,
     lastResult: null,
+    lastHint: null,
   };
 }
 
@@ -104,15 +99,12 @@ const workflow = new StateGraph(GraphState)
     presentQuestion: "presentQuestion",
   })
   .addEdge("presentQuestion", "grading")
-  .addEdge("grading", "result")
-  .addConditionalEdges("result", afterResult, {
+  .addConditionalEdges("grading", afterGrading, {
     hint: "hint",
-    advance: "advance",
+    result: "result",
   })
-  .addConditionalEdges("hint", afterHint, {
-    presentQuestion: "presentQuestion",
-    advance: "advance",
-  })
+  .addEdge("hint", "presentQuestion")
+  .addEdge("result", "advance")
   .addEdge("advance", "selectNextObjective")
   .addEdge("completion", END);
 

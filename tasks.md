@@ -75,7 +75,7 @@ npm install -D @types/pg
 ### 5a — Shared infrastructure
 - [x] **Postgres pool** — `src/lib/db.ts`; single `new pg.Pool({ connectionString })` export
 - [x] **Neo4j driver** — `src/lib/neo4j.ts`; single `neo4j.driver(uri, neo4j.auth.basic(user, pass))` export; wrap every call with ~1.5s timeout + fallback per CONSTITUTION §Principle 4
-- [x] **State schema** — `src/agent/state.ts`; define `GraphState` with Zod or `Annotation`: `documentId`, `extractedText`, `plan`, `planApproved`, `prerequisites`, `objectives`, `currentObjectiveIndex`, `currentQuestion`, `answerKey`, `attemptCount`, `evalAttemptCount`, `attempts[]`, `messages[]`
+- [x] **State schema** — `src/agent/state.ts`; `GraphState` with: `documentId`, `extractedText`, `plan`, `planApproved`, `prerequisites`, `objectives`, `currentObjectiveIndex`, `currentQuestion`, `answerKey`, `attemptCount`, `evalAttemptCount`, `pendingAnswer`, `lastResult`, `lastHint`, `attempts[]`, `messages[]`
 
 ### 5b — Planner Agent
 - [x] **System prompt** — sees: full PDF text, plan state. Never sees: quiz attempts, answer keys (CONSTITUTION §Principle 5)
@@ -84,86 +84,82 @@ npm install -D @types/pg
 - [x] **Plan-approval node** — `state.planApproved ?? interrupt({ type: "approval", content: plan })`; guard prevents re-firing on retry
 
 ### 5c — Concept graph write (after plan approval)
-- [x] **Neo4j write step** — filter `prerequisites` list against user-edited objectives (drop edges referencing removed objectives), write `(:Objective)-[:PREREQUISITE_FOR]->(:Objective)` nodes; wrapped with timeout + fallback; runs once after plan-approval interrupt resumes
+- [x] **Neo4j write step** — filter `prerequisites` list against user-edited objectives, write `(:Objective)-[:PREREQUISITE_FOR]->(:Objective)` nodes; timeout + fallback; runs once after plan-approval interrupt resumes
 
 ### 5d — Quiz Agent
-- [x] **System prompt** — sees: approved plan, current objective, answer key it authors. Quiz Agent owns the answer key
-- [x] **Select-next-objective step** — query Neo4j for unresolved objective with fewest unresolved prerequisites; fallback to list order on timeout/error/cycle
-- [x] **MCQ generation node** — structured output: `{ question, choices[4], correctIndex, explanation }`; answer key written to Quiz Agent's state slice only
-- [x] **Self-eval node** — score generated MCQ on rubric (unambiguous answer, plausible distractors, objective alignment); below threshold → regenerate with critique; cap: 2 regenerations (3 total), tracked via `evalAttemptCount` in state (CONSTITUTION §Principle 3)
-- [x] **Present-question node** — `interrupt({ type: "quizAnswer", objective, question, choices })`; guarded
-- [x] **Grading node** — Quiz Agent compares `selected` to `correctIndex`; writes `quiz_attempts` row to Postgres
+- [x] **System prompt** — sees: approved plan, current objective, answer key it authors
+- [x] **Select-next-objective step** — query Neo4j for unresolved objective with fewest unresolved prerequisites; fallback to list order
+- [x] **MCQ generation node** — structured output: `{ question, choices[4], correctIndex, explanation }`; answer key written to state (isolated from Tutor)
+- [x] **Self-eval node** — score MCQ on rubric; below threshold → regenerate with critique; cap: 3 total attempts via `evalAttemptCount`
+- [x] **Present-question node** — `interrupt({ type: "quizAnswer", ... })`; clears `lastResult`/`lastHint` on resume
+- [x] **Grading node** — compares `pendingAnswer` to `correctIndex`; writes `quiz_attempts` row; resolution `"correct" | null` (no reveal cap)
 
 ### 5e — Tutor Agent
 - [x] **System prompt** — sees: question, objective, incorrect attempt, `attemptCount`. Structurally never sees answer key (CONSTITUTION §Principle 1)
-- [x] **Hint node** — triggered on incorrect + `attemptCount < 3`; returns hint only; on `attemptCount === 3` returns full explanation + correct answer and marks resolution `revealed`
-- [x] **Retry loop edge** — `attemptCount < 3` → re-fire `quizAnswer` interrupt; `attemptCount >= 3` → advance to next objective (CONSTITUTION §Principle 2 + 3)
-- [x] **Completion node** — reads `quiz_attempts` rows from Postgres (not agent memory, CONSTITUTION §Principle 9); attempts Neo4j read for prerequisite enrichment on struggled objectives; fallback to flat recap
+- [x] **Hint node** — fires on every wrong answer; stores hint in `lastHint` state field (not messages); no attempt cap or reveal
+- [x] **Retry loop** — wrong answer: `grading → hint → presentQuestion` (no extra interrupt, no double-resume); correct: `grading → resultNode → advance`
+- [x] **Completion node** — reads `quiz_attempts` from Postgres; splits by `attempt_number`: `firstTry` (1 attempt) vs `struggled` (2+); Neo4j prerequisite enrichment on struggled objectives; personalised study tips
 
 ### 5e-pre — RESOLVED: attempts reducer vs. pending sentinel
-
-> **Resolution:** Option 1 applied. `pendingAnswer: Annotation<number | null>()` added to `GraphState` in `state.ts`. `presentQuestionNode` writes `selectedIndex` to `pendingAnswer`; `gradingNode` reads from there. No sentinel in `attempts` reducer.
+> **Resolution:** `pendingAnswer: Annotation<number | null>()` in `GraphState`. `presentQuestionNode` writes `selectedIndex` to `pendingAnswer`; `gradingNode` reads from there.
 
 ### 5f — Graph wiring
-- [x] **Graph assembly** — `src/agent/graph.ts`; wire all nodes with `StateGraph`, attach `PostgresSaver` as checkpointer, export compiled graph
-- [x] **Use `graph.streamEvents()`** — switched from `graph.stream(streamMode:"values")` to `graph.streamEvents({ version: "v2" })`; emits LangChain event format consumed by `@ag-ui/langgraph` SDK; `Command({ resume })` used for interrupt resume
+- [x] **Graph assembly** — `src/agent/graph.ts`; all nodes wired; `PostgresSaver` checkpointer; correct→`resultNode`→advance; wrong→`hint`→`presentQuestion` loop
+- [x] **`graph.streamEvents()`** — `Command({ resume })` for interrupt resume
 
 ---
 
 ## Phase 6 — CopilotKit runtime + frontend
 
-- [x] **CopilotKit route** — `app/api/copilotkit/[[...slug]]/route.ts`; `CopilotRuntime` with `LangGraphAgent` registered; switched to `createCopilotHonoHandler` (`@copilotkit/runtime/v2/hono`) with `mode: "multi-route"` so GET `/threads` resolves (was 405 with single-route mode)
-- [x] **`<CopilotKit>` provider** — `src/components/CopilotProvider.tsx` wraps children with `<CopilotKit runtimeUrl="/api/copilotkit" agent="ai-lesson-agent">`; imported in `app/layout.tsx`
-- [x] **Plan-approval UI** — `src/components/PlanApproval.tsx`; pure controlled component `({ plan, onApprove })`; rendered from `page.tsx` when `state.plan && !state.planApproved && !running`
-- [x] **Quiz UI** — `src/components/QuizQuestion.tsx`; pure controlled component `({ question, choices, onSelect })`; rendered from `page.tsx` when `state.planApproved && state.currentQuestion && !running`
-- [x] **Interrupt resume** — `resume()` helper in `page.tsx` POSTs `{ command: { resume } }` to `/api/langgraph/threads/:id/runs/stream` directly, drains SSE, then GETs `/threads/:id/state` to sync React state; bypasses CopilotKit interrupt hooks entirely (required — hooks only render inside `CopilotChat` UI)
-- [x] **LangGraph HTTP adapter** — `src/app/api/langgraph/[...path]/route.ts`; implements full LangGraph Platform HTTP API surface needed by `@langchain/langgraph-sdk` Client: `POST /assistants/search`, `GET /assistants/:id`, `GET /assistants/:id/schemas`, `GET /assistants/:id/graph`, `GET|POST /threads`, `GET /threads/:id`, `GET /threads/:id/state`, `PUT /threads/:id/state`, `POST /threads/:id/runs/stream`
-- [x] **Hint display** — render hint/explanation inline in the quiz UI when returned from Tutor Agent (Tutor Agent node exists; UI not wired)
-- [x] **Score/recap screen** — render completion node output (per-objective `correct`/`revealed` breakdown + study tips); implemented in `page.tsx:92-135` — reads last message from completionNode
-- [x] **End-to-end smoke test** — plan approval ✓, quiz loop ✓ (hints shown, start-over works); known bug: hint content may misalign with selected answer — investigate tutor node
-- [ ] **Known issue: reveal shown on next question** — after 3 wrong answers, `hintNode` fires reveal then graph advances to next objective; reveal message lands in `state.messages` and renders as hint box on the NEW question instead of blocking on the old one. Fix: add intermediate "revealed" UI state in `page.tsx` that shows the reveal message and a "Next question →" button before `resume()` is called for the advance
+- [x] **CopilotKit route** — `app/api/copilotkit/[[...slug]]/route.ts`; `CopilotRuntime` with `LangGraphAgent`; `createCopilotHonoHandler` with `mode: "multi-route"`
+- [x] **`<CopilotKit>` provider** — `src/components/CopilotProvider.tsx` with `agent="ai-lesson-agent"`
+- [x] **Plan-approval UI** — `src/components/PlanApproval.tsx`; parses plan JSON, renders objectives as numbered checklist
+- [x] **Quiz UI** — `src/components/QuizQuestion.tsx`; interactive choices; wrong-answer feedback panel (red, no green reveal); "Try again" is local state only (no resume); correct shows green + explanation + "Next question →"
+- [x] **Hint display** — `lastHint` from state renders inline in wrong-answer panel immediately after grading
+- [x] **Interrupt resume** — `resume()` POSTs to `/api/langgraph/threads/:id/runs/stream`, drains SSE, GETs state
+- [x] **LangGraph HTTP adapter** — `src/app/api/langgraph/[...path]/route.ts`; full platform API surface
+- [x] **Score/recap screen** — `page.tsx`; reads `state.attempts` client-side; "First try ✓" (green) + "Needed more attempts" (amber, try count) + study tips from agent message
 
 ---
 
 ## Phase 7 — Constitution compliance audit
 
-Run these checks before calling the build done:
-
-- [x] **Principle 1** — Tutor hint path: no answerKey in prompt. Reveal path reads `explanation`+`correctChoice` only at `attemptCount>=3` (intentional, documented at `tutor.ts:60`)
-- [x] **Principle 2** — `afterGrading` edge returns only `"hint"|"advance"`; advance only on `correct|revealed` (`graph.ts:24-28`)
-- [x] **Principle 3** — `evalAttemptCount` and `attemptCount` explicit in `state.ts:21-22`; grading reads `attemptCount` from state not node-entry count
-- [x] **Principle 4** — `Promise.race` with 1500ms timeout in `neo4j.ts:15`; all callers use `runNeo4j(..., fallback)`
-- [x] **Principle 5** — Planner LLM only sees `extractedText` (`planner.ts:37`); Quiz prompt excludes planner system content; Tutor hint prompt structurally excludes answerKey
-- [x] **Principle 6** — `<document>\n${extractedText}\n</document>` in user turn, not system prompt (`planner.ts:37`)
-- [x] **Principle 7** — All Cypher queries in `conceptGraph.ts`, `quiz.ts`, `tutor.ts` include `documentId` parameter
-- [x] **Principle 8** — `interrupt()` in node functions `planApprovalNode` (`planner.ts:66`) and `presentQuestionNode` (`quiz.ts:192`), not tools
-- [x] **Principle 9** — `completionNode` queries `quiz_attempts` table via Postgres (`tutor.ts:106-116`), not state.messages
+- [x] **Principle 1** — Tutor hint path never sees answerKey
+- [x] **Principle 2** — advance only on `correct`; wrong always retries
+- [x] **Principle 3** — `evalAttemptCount` caps MCQ regeneration at 3; no attempt cap on student retries (retry without penalty per spec)
+- [x] **Principle 4** — `Promise.race` 1500ms timeout in `neo4j.ts`; all callers use `runNeo4j(..., fallback)`
+- [x] **Principle 5** — Planner only sees `extractedText`; Tutor structurally excludes answerKey
+- [x] **Principle 6** — PDF content in user turn, not system prompt
+- [x] **Principle 7** — All Cypher queries include `documentId`
+- [x] **Principle 8** — `interrupt()` in node functions, not tools
+- [x] **Principle 9** — `completionNode` reads `quiz_attempts` from Postgres, not state
 
 ---
 
 ## Phase 8 — Wiring verification
 
 - [ ] Upload a test PDF → confirm `documents` row written, `documentId` returned
-- [ ] Plan generation → confirm structured output with `objectives` + `prerequisites` fields
-- [ ] Plan-approval interrupt → confirm `useInterrupt` fires, edits persist through `resolve(editedPlan)`
-- [ ] Neo4j write → confirm `(:Objective)` nodes created with correct `documentId`; filtered edges match post-edit objective list
-- [ ] Quiz loop → confirm self-eval runs before question is shown; confirm MCQ reaches `quizAnswer` interrupt
+- [ ] Plan generation → confirm structured output with `objectives` + `prerequisites`
+- [ ] Plan-approval interrupt → confirm edits persist
+- [ ] Neo4j write → confirm `(:Objective)` nodes created with correct `documentId`
+- [ ] Quiz loop → confirm self-eval runs; MCQ reaches `quizAnswer` interrupt
+- [ ] Wrong answer → confirm hint shown immediately in red panel; retry works without stuck/double-resume
 - [ ] Correct answer → confirm `quiz_attempts` row written with `resolution: "correct"`, graph advances
-- [ ] 3 wrong answers → confirm hint on attempts 1–2, reveal on attempt 3, `resolution: "revealed"`, graph advances
-- [ ] Completion → confirm recap built from Postgres rows; confirm Neo4j study-tip enrichment fires (and fallback works when Neo4j is unreachable)
-- [ ] Postgres checkpoint → confirm mid-session refresh resumes correctly (same `threadId`)
+- [ ] Completion → confirm `firstTry`/`struggled` split; study tips from Neo4j prerequisite query; fallback when Neo4j unreachable
+- [ ] Postgres checkpoint → confirm mid-session refresh resumes correctly
 
 ---
 
 ## Phase 9 — Final docs pass
 
-- [ ] **README.md** — verify setup instructions are complete and accurate end-to-end: clone, `npm install`, `.env.local` vars, `npm run dev`
+- [ ] **README.md** — verify setup instructions complete and accurate: clone, `npm install`, `.env.local` vars, `npm run dev`
 - [ ] **AI_USAGE.md** — confirm all sessions have entries; no gaps
 
 ---
 
-## Open threads from UI rework session (2026-06-20 evening)
+## Open threads
 
-- [ ] **Reveal timing** — after 3 wrong answers, reveal message from `hintNode` should block on the current question (show "Here's the answer" + Next button) before advancing to next objective; currently advances immediately and reveal lands as hint on new question. Fix: add `revealed` UI state in `page.tsx` that renders reveal text + "Next question →" button, calls `resume()` only on click
-- [ ] **Phase 8 wiring verification** — grading row (`quiz_attempts` written to Postgres), Neo4j objective nodes, completion node recap — none verified end-to-end; run smoke tests
-- [ ] **Quiz progress bar off-by-one** — bar shows 0% on first question; `progress = objectiveIndex / totalObjectives` starts at 0/N; decide if bar should show attempt-based progress or start at non-zero
+- [ ] **End-to-end live test** — full quiz loop (wrong → hint → retry → correct → next objective → completion) not verified against live backend; run once before submission
+- [ ] **Quiz progress bar off-by-one** — `progress = objectiveIndex / totalObjectives` starts at 0/N on first question; decide if bar should start at a non-zero value or switch to attempt-based progress
+- [ ] **Phase 8 wiring verification** — grading row, Neo4j write, completion node not verified end-to-end
+- [ ] **Phase 9 README** — final pass not done

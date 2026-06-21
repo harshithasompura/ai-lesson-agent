@@ -30,18 +30,9 @@ Rules:
 - Do not repeat the question back verbatim
 - Respond with a JSON object: {"hint": string}`;
 
-const REVEAL_SYSTEM = `You are a Tutor Agent. A student has exhausted their attempts on a quiz question.
-Your job is to give a clear, educational explanation of the correct answer.
-
-Rules:
-- Explain WHY the correct answer is correct
-- Briefly explain why the other options are wrong if relevant
-- Keep it under 4 sentences
-- Be encouraging — frame it as a learning moment`;
-
 // ── Nodes ──────────────────────────────────────────────────────────────────
 
-/** Returns hint on attempts 1-2; full reveal + correct answer on attempt 3. */
+/** Returns a hint guiding the student toward the answer without revealing it. */
 export async function hintNode(
   state: GraphStateType
 ): Promise<Partial<GraphStateType>> {
@@ -54,33 +45,7 @@ export async function hintNode(
     .map((a) => JSON.parse(a))
     .find((a) => a.objectiveIndex === state.currentObjectiveIndex);
 
-  const isReveal = state.attemptCount >= 3;
-
-  if (isReveal) {
-    // CONSTITUTION §Principle 1: reveal uses explanation from answerKey (Quiz Agent authored it)
-    // Tutor receives it here ONLY at the reveal stage — it cannot derive it
-    const { explanation, correctIndex } = JSON.parse(state.answerKey);
-    const correctChoice = choices[correctIndex];
-
-    const result = await tutorModel.invoke([
-      { role: "system", content: REVEAL_SYSTEM },
-      {
-        role: "user",
-        content: `Objective: ${objective}\nQuestion: ${question}\nChoices: ${JSON.stringify(choices)}\nCorrect answer: ${correctChoice}\nExplanation: ${explanation}\n\nWrite the reveal explanation.`,
-      },
-    ]);
-
-    return {
-      messages: [
-        {
-          role: "assistant" as const,
-          content: `**Answer revealed:** ${correctChoice}\n\n${result.hint}`,
-        } as never,
-      ],
-    };
-  }
-
-  // Hint path — CONSTITUTION §Principle 1: answerKey NOT passed to prompt
+  // CONSTITUTION §Principle 1: answerKey NOT passed to prompt
   const result = await tutorModel.invoke([
     { role: "system", content: HINT_SYSTEM },
     {
@@ -89,14 +54,7 @@ export async function hintNode(
     },
   ]);
 
-  return {
-    messages: [
-      {
-        role: "assistant" as const,
-        content: result.hint,
-      } as never,
-    ],
-  };
+  return { lastHint: result.hint };
 }
 
 /** Final recap node. Reads from Postgres (CONSTITUTION §Principle 9). */
@@ -105,69 +63,75 @@ export async function completionNode(
 ): Promise<Partial<GraphStateType>> {
   const { rows } = await db.query<{
     objective: string;
-    resolution: string | null;
+    objective_index: number;
     attempt_number: number;
+    resolution: string | null;
   }>(
-    `SELECT objective, resolution, attempt_number
+    `SELECT objective, objective_index, attempt_number, resolution
      FROM quiz_attempts
      WHERE document_id = $1
-     ORDER BY objective_index ASC, attempt_number DESC`,
+     ORDER BY objective_index ASC, attempt_number ASC`,
     [state.documentId]
   );
 
-  // Last row per objective = final resolution
-  const seen = new Set<string>();
-  const finalAttempts: typeof rows = [];
+  // Per objective: total attempts and whether they got it correct
+  type ObjStat = { objective: string; totalAttempts: number; correct: boolean };
+  const byIndex = new Map<number, ObjStat>();
   for (const row of rows) {
-    if (!seen.has(row.objective)) {
-      seen.add(row.objective);
-      finalAttempts.push(row);
-    }
+    const existing = byIndex.get(row.objective_index);
+    byIndex.set(row.objective_index, {
+      objective: row.objective,
+      totalAttempts: row.attempt_number,
+      correct: row.resolution === "correct" || existing?.correct === true,
+    });
   }
+  const stats = [...byIndex.values()];
 
-  const correct = finalAttempts.filter((r) => r.resolution === "correct");
-  const revealed = finalAttempts.filter((r) => r.resolution === "revealed");
+  const firstTry = stats.filter((s) => s.correct && s.totalAttempts === 1);
+  const struggled = stats.filter((s) => s.correct && s.totalAttempts > 1);
 
-  // Enrich struggled objectives via Neo4j (CONSTITUTION §Principle 4: timeout + fallback)
-  const studyTips = await runNeo4j(async (session) => {
-    if (revealed.length === 0) return null;
-
-    const struggledTitles = revealed.map((r) => r.objective);
+  // Enrich struggled objectives with prerequisite context from Neo4j
+  const prereqTips = await runNeo4j(async (session) => {
+    if (struggled.length === 0) return null;
+    const titles = struggled.map((s) => s.objective);
     const result = await session.executeRead((tx) =>
       tx.run(
         `MATCH (o:Objective {documentId: $documentId})
-         WHERE o.title IN $struggledTitles
+         WHERE o.title IN $titles
          OPTIONAL MATCH (pre:Objective {documentId: $documentId})-[:PREREQUISITE_FOR]->(o)
          RETURN o.title AS objective, collect(pre.title) AS prerequisites`,
-        { documentId: state.documentId, struggledTitles }
+        { documentId: state.documentId, titles }
       )
     );
-
     return result.records.map((r) => ({
       objective: r.get("objective") as string,
       prerequisites: r.get("prerequisites") as string[],
     }));
   }, null);
 
+  const tipLines = struggled.map((s) => {
+    const prereqs = prereqTips?.find((t) => t.objective === s.objective)?.prerequisites ?? [];
+    const attemptsNote = `(needed ${s.totalAttempts} attempts)`;
+    return prereqs.length > 0
+      ? `- **${s.objective}** ${attemptsNote} — strengthen prerequisite(s): ${prereqs.join(", ")}`
+      : `- **${s.objective}** ${attemptsNote} — review this concept before moving on`;
+  });
+
   const recap = [
     `## Session Complete`,
     ``,
-    `**Score:** ${correct.length}/${finalAttempts.length} objectives mastered`,
+    `**Score:** ${stats.filter((s) => s.correct).length}/${stats.length} objectives mastered`,
     ``,
-    correct.length > 0
-      ? `**Mastered:**\n${correct.map((r) => `- ${r.objective}`).join("\n")}`
+    firstTry.length > 0
+      ? `**Got it first try:**\n${firstTry.map((s) => `- ${s.objective}`).join("\n")}`
       : "",
-    revealed.length > 0
-      ? `**Review these:**\n${revealed.map((r) => `- ${r.objective}`).join("\n")}`
+    struggled.length > 0
+      ? `**Needed more attempts:**\n${struggled.map((s) => `- ${s.objective} (${s.totalAttempts} tries)`).join("\n")}`
       : "",
-    studyTips && studyTips.length > 0
-      ? `\n**Study tips:**\n${studyTips
-          .map((t) =>
-            t.prerequisites.length > 0
-              ? `- Revisit **${t.objective}** — review prerequisite(s): ${t.prerequisites.join(", ")}`
-              : `- Revisit **${t.objective}**`
-          )
-          .join("\n")}`
+    tipLines.length > 0
+      ? `\n**Study tips:**\n${tipLines.join("\n")}`
+      : struggled.length === 0
+      ? `\n**Study tips:**\nExcellent work — you answered every question correctly on the first attempt!`
       : "",
   ]
     .filter(Boolean)

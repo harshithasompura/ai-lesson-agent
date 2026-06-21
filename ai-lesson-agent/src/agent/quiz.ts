@@ -142,6 +142,7 @@ export async function generateMCQNode(
     answerKey: JSON.stringify({ correctIndex: mcq.correctIndex, explanation: mcq.explanation }),
     attemptCount: 0,
     evalAttemptCount: (state.evalAttemptCount ?? 0),
+    lastHint: null,
   };
 }
 
@@ -208,7 +209,8 @@ export async function presentQuestionNode(
   const { selectedIndex }: { selectedIndex: number } =
     typeof raw === "string" ? JSON.parse(raw) : raw;
 
-  return { pendingAnswer: selectedIndex };
+  // Clear previous attempt's feedback before grading the new answer
+  return { pendingAnswer: selectedIndex, lastResult: null, lastHint: null };
 }
 
 /** Interrupt to show the grading result in the UI before advancing. Clears lastResult on resume. */
@@ -228,8 +230,7 @@ export async function gradingNode(
 
   const isCorrect = selectedIndex === correctIndex;
   const newAttemptCount = (state.attemptCount ?? 0) + 1;
-  const hitCap = newAttemptCount >= 3;
-  const resolution = isCorrect ? "correct" : hitCap ? "revealed" : null;
+  const resolution = isCorrect ? "correct" : null;
 
   await db.query(
     `INSERT INTO quiz_attempts
@@ -255,7 +256,7 @@ export async function gradingNode(
       isCorrect,
       correctIndex,
       selectedIndex,
-      explanation: (isCorrect || resolution === "revealed") ? explanation : null,
+      explanation: isCorrect ? explanation : null,
       resolution,
     },
     attempts: [
@@ -267,7 +268,6 @@ export async function gradingNode(
         isCorrect,
         attemptNumber: newAttemptCount,
         resolution,
-        explanation: resolution === "revealed" ? explanation : null,
       }),
     ],
   };

@@ -163,15 +163,31 @@ export default function Home() {
     if (!isComplete) return null;
     const records = (state.attempts ?? []).map((a: string) => {
       try { return JSON.parse(a); } catch { return null; }
-    }).filter(Boolean);
-    const byObj = new Map<number, { resolution: string; objectiveIndex: number }>();
-    for (const r of records) byObj.set(r.objectiveIndex, r);
-    const finals = [...byObj.values()];
+    }).filter(Boolean) as Array<{ objectiveIndex: number; attemptNumber: number; resolution: string | null }>;
+
+    // Per objective: max attempt number seen and whether eventually correct
+    const byObj = new Map<number, { maxAttempt: number; correct: boolean }>();
+    for (const r of records) {
+      const cur = byObj.get(r.objectiveIndex);
+      byObj.set(r.objectiveIndex, {
+        maxAttempt: Math.max(cur?.maxAttempt ?? 0, r.attemptNumber ?? 1),
+        correct: r.resolution === "correct" || cur?.correct === true,
+      });
+    }
+
+    const firstTry = [...byObj.entries()]
+      .filter(([, v]) => v.correct && v.maxAttempt === 1)
+      .map(([i]) => state.objectives?.[i]).filter(Boolean) as string[];
+    const struggled = [...byObj.entries()]
+      .filter(([, v]) => v.correct && v.maxAttempt > 1)
+      .map(([i, v]) => ({ label: state.objectives?.[i] as string, attempts: v.maxAttempt }))
+      .filter((x) => x.label);
+
     return {
-      correct: finals.filter((r) => r.resolution === "correct").length,
+      correct: [...byObj.values()].filter((v) => v.correct).length,
       total: state.objectives?.length ?? 0,
-      mastered: finals.filter((r) => r.resolution === "correct").map((r) => state.objectives[r.objectiveIndex]).filter(Boolean),
-      review: finals.filter((r) => r.resolution !== "correct").map((r) => state.objectives[r.objectiveIndex]).filter(Boolean),
+      firstTry,
+      struggled,
     };
   })();
 
@@ -235,20 +251,11 @@ export default function Home() {
           {showQuiz && (() => {
             try {
               const { question, choices } = JSON.parse(state.currentQuestion);
-              // eslint-disable-next-line @typescript-eslint/no-explicit-any
-              const hintMsg = state.messages?.findLast((m: any) => {
-                const content = String(m.content ?? "");
-                return (m._getType?.() === "ai" || m.role === "assistant") &&
-                  !content.startsWith("MCQ critique") &&
-                  !content.startsWith("## Session") &&
-                  !content.startsWith("**Score:**");
-              });
-              const hint = hintMsg ? String(hintMsg.content) : undefined;
               return (
                 <QuizQuestion
                   question={question}
                   choices={choices}
-                  hint={hint}
+                  hint={state.lastHint ?? undefined}
                   result={state.lastResult ?? undefined}
                   loading={resuming}
                   objectiveIndex={state.currentObjectiveIndex}
@@ -276,11 +283,11 @@ export default function Home() {
                 </p>
               </div>
 
-              {recapStats.mastered.length > 0 && (
+              {recapStats.firstTry.length > 0 && (
                 <div className="bg-green-50 border border-green-200 rounded-xl p-4 mb-3">
-                  <p className="text-xs font-semibold text-green-700 uppercase tracking-wide mb-2">Mastered</p>
+                  <p className="text-xs font-semibold text-green-700 uppercase tracking-wide mb-2">First try ✓</p>
                   <ul className="space-y-1.5">
-                    {recapStats.mastered.map((obj, i) => (
+                    {recapStats.firstTry.map((obj, i) => (
                       <li key={i} className="flex items-start gap-2 text-sm text-green-900">
                         <span className="text-green-500 mt-0.5 flex-shrink-0">✓</span>
                         {obj}
@@ -290,14 +297,14 @@ export default function Home() {
                 </div>
               )}
 
-              {recapStats.review.length > 0 && (
+              {recapStats.struggled.length > 0 && (
                 <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 mb-3">
-                  <p className="text-xs font-semibold text-amber-700 uppercase tracking-wide mb-2">Review</p>
+                  <p className="text-xs font-semibold text-amber-700 uppercase tracking-wide mb-2">Needed more attempts</p>
                   <ul className="space-y-1.5">
-                    {recapStats.review.map((obj, i) => (
+                    {recapStats.struggled.map((s, i) => (
                       <li key={i} className="flex items-start gap-2 text-sm text-amber-900">
                         <span className="text-amber-500 mt-0.5 flex-shrink-0">↩</span>
-                        {obj}
+                        <span>{s.label} <span className="text-amber-600 text-xs">({s.attempts} tries)</span></span>
                       </li>
                     ))}
                   </ul>
