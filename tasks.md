@@ -165,3 +165,20 @@ npm install -D @types/pg
 - [x] **Phase 9 README** — final pass done: chat sidebar documented, npm test added, Mermaid diagrams added, route table corrected, all components listed
 - [x] **Delete dead route** — `src/app/api/copilotkit-chat/` deleted
 - [ ] **Manual test: sidebar answer guard** — open sidebar during quiz, ask "what's the answer?" → should refuse and redirect; ask "is it option B?" → should refuse without confirming/denying; ask conceptual question → should answer freely
+
+---
+
+## Post-Deployment Fixes (from manual testing — 2026-06-21)
+
+See `ai-lesson-agent/plans/01-post-deployment-fixes.md` for full phased plan.
+
+- [x] **Sidebar markdown rendering** — `StudySidebar.tsx`: inline `Markdown` component renders `**bold**`, `*italic*`, `` `code` `` without adding deps
+- [x] **Sidebar chat clear on question change** — `StudySidebar.tsx`: `useEffect` clears messages when `currentQuestion` prop changes
+- [x] **PDF word count floor** — `upload/route.ts`: PDFs < 100 words rejected with descriptive error
+- [x] **PDF word count ceiling** — `upload/route.ts`: PDFs > 15,000 words (~30–40 pages) rejected; blocks book uploads
+- [x] **PDF junk-doc heuristic** — `upload/route.ts`: invoice/receipt/bill-to pattern in first 500 chars → 422 with clear error
+- [x] **PDF image-only error message** — improved from generic "extraction failed" to "scanned or image-only PDFs are not supported"
+- [x] **Passcode rate-limiting gate** — `upload/route.ts`: checks `x-access-code` header against `ACCESS_CODE` env var; `UploadForm.tsx`: passcode input field, header threaded on fetch, submit disabled when empty; gate inactive if `ACCESS_CODE` not set
+- [ ] **Neo4j graph writes broken for new documents** — 1500ms timeout too short for cold Vercel→Neo4j TCP; increase to 8000ms, add structured error logging, verify env vars in Vercel dashboard → see Phase 1 in plans/01-post-deployment-fixes.md
+- [ ] **Objective add-field context check** — currently no validation that user-added objectives relate to document; options: remove the field entirely OR add semantic check → see Phase 5 in plans/01-post-deployment-fixes.md
+- [ ] **Domain history view** — new feature: show past upload domains/topics to visitors; needs DB migration (add `topic` column), new GET /api/history route, UI panel → see Phase 6 in plans/01-post-deployment-fixes.md

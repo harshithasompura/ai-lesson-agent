@@ -4,6 +4,24 @@ import { useState, useRef, useEffect } from "react";
 
 type Message = { role: "user" | "assistant"; content: string };
 
+// Minimal markdown: bold, italic, inline code — no dep
+function Markdown({ children }: { children: string }) {
+  const parts = children.split(/(\*\*[^*]+\*\*|\*[^*]+\*|`[^`]+`)/g);
+  return (
+    <span>
+      {parts.map((part, i) => {
+        if (part.startsWith("**") && part.endsWith("**"))
+          return <strong key={i}>{part.slice(2, -2)}</strong>;
+        if (part.startsWith("*") && part.endsWith("*"))
+          return <em key={i}>{part.slice(1, -1)}</em>;
+        if (part.startsWith("`") && part.endsWith("`"))
+          return <code key={i} className="bg-stone-200 rounded px-0.5 text-xs font-mono">{part.slice(1, -1)}</code>;
+        return <span key={i}>{part}</span>;
+      })}
+    </span>
+  );
+}
+
 export function StudySidebar({
   currentQuestion,
   objective,
@@ -21,6 +39,11 @@ export function StudySidebar({
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
+
+  // Clear chat when question changes
+  useEffect(() => {
+    setMessages([]);
+  }, [currentQuestion]);
 
   async function send() {
     const text = input.trim();
@@ -135,7 +158,7 @@ export function StudySidebar({
                       : "bg-stone-100 text-stone-800",
                   ].join(" ")}
                 >
-                  {m.content || <span className="animate-pulse">…</span>}
+                  {m.content ? <Markdown>{m.content}</Markdown> : <span className="animate-pulse">…</span>}
                 </div>
               </div>
             ))}

@@ -11,6 +11,7 @@ export default function UploadForm({ onUpload }: Props) {
   const [error, setError] = useState<string | null>(null);
   const [fileName, setFileName] = useState<string | null>(null);
   const [dragging, setDragging] = useState(false);
+  const [passcode, setPasscode] = useState("");
   const inputRef = useRef<HTMLInputElement>(null);
 
   const submit = useCallback(async (file: File) => {
@@ -21,7 +22,11 @@ export default function UploadForm({ onUpload }: Props) {
     const form = new FormData();
     form.append("file", file);
 
-    const res = await fetch("/api/upload", { method: "POST", body: form });
+    const res = await fetch("/api/upload", {
+      method: "POST",
+      body: form,
+      headers: { "x-access-code": passcode },
+    });
     const json = await res.json().catch(() => ({}));
 
     if (!res.ok) {
@@ -32,7 +37,7 @@ export default function UploadForm({ onUpload }: Props) {
 
     setStatus("idle");
     onUpload(json.documentId);
-  }, [onUpload]);
+  }, [onUpload, passcode]);
 
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -118,9 +123,17 @@ export default function UploadForm({ onUpload }: Props) {
         <p className="mt-3 text-sm text-red-600 text-center">{error}</p>
       )}
 
+      <input
+        type="password"
+        placeholder="Access code"
+        value={passcode}
+        onChange={(e) => setPasscode(e.target.value)}
+        className="mt-3 w-full rounded-xl border border-stone-200 px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-teal-500 focus:border-transparent"
+      />
+
       <button
         type="submit"
-        disabled={uploading || !fileName}
+        disabled={uploading || !fileName || !passcode.trim()}
         className="mt-4 w-full py-3 rounded-xl bg-teal-600 text-white font-medium hover:bg-teal-700 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
       >
         {uploading ? "Uploading…" : "Upload & Start"}
