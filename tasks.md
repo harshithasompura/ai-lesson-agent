@@ -152,16 +152,16 @@ npm install -D @types/pg
 
 ## Phase 9 — Final docs pass
 
-- [ ] **README.md** — verify setup instructions complete and accurate: clone, `npm install`, `.env.local` vars, `npm run dev`
-- [ ] **AI_USAGE.md** — confirm all sessions have entries; no gaps
+- [x] **README.md** — setup instructions complete; Mermaid architecture + agent flow diagrams added; `npm test` step added
+- [x] **AI_USAGE.md** — all sessions have entries; no gaps
 
 ---
 
 ## Open threads
 
 - [ ] **End-to-end live test** — full quiz loop (wrong → hint → retry → correct → next objective → completion) not verified against live backend; run once before submission
-- [ ] **Quiz progress bar off-by-one** — `progress = objectiveIndex / totalObjectives` starts at 0/N on first question; decide if bar should start at a non-zero value or switch to attempt-based progress
+- [x] **Quiz progress bar off-by-one** — fixed: `(objectiveIndex + 1) / totalObjectives` in `QuizQuestion.tsx`
 - [ ] **Phase 8 wiring verification** — grading row, Neo4j write, completion node not verified end-to-end
-- [ ] **Phase 9 README** — final pass not done
+- [x] **Phase 9 README** — final pass done: chat sidebar documented, npm test added, Mermaid diagrams added, route table corrected, all components listed
 - [x] **Delete dead route** — `src/app/api/copilotkit-chat/` deleted
 - [ ] **Manual test: sidebar answer guard** — open sidebar during quiz, ask "what's the answer?" → should refuse and redirect; ask "is it option B?" → should refuse without confirming/denying; ask conceptual question → should answer freely

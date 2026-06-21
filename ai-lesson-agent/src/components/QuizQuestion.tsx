@@ -65,7 +65,7 @@ export function QuizQuestion({
     setSelected(null);
   }
 
-  const progress = totalObjectives > 0 ? (objectiveIndex / totalObjectives) * 100 : 0;
+  const progress = totalObjectives > 0 ? ((objectiveIndex + 1) / totalObjectives) * 100 : 0;
 
   return (
     <div className="animate-fade-in">
