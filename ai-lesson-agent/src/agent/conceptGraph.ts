@@ -27,7 +27,7 @@ export async function writeConceptGraphNode(
       for (const title of plan.objectives) {
         await tx.run(
           `MERGE (o:Objective {title: $title, documentId: $documentId})`,
-          { title, documentId: state.documentId }
+          { title, documentId: String(state.documentId) }
         );
       }
 
@@ -37,7 +37,7 @@ export async function writeConceptGraphNode(
           `MATCH (a:Objective {title: $from, documentId: $documentId})
            MATCH (b:Objective {title: $to, documentId: $documentId})
            MERGE (a)-[:PREREQUISITE_FOR]->(b)`,
-          { from, to, documentId: state.documentId }
+          { from, to, documentId: String(state.documentId) }
         );
       }
     });

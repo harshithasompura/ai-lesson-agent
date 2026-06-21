@@ -90,7 +90,7 @@ export async function selectNextObjectiveNode(
          ORDER BY unresolvedPrereqCount ASC
          LIMIT 1
          RETURN o.title AS title`,
-        { documentId: state.documentId, unresolvedTitles }
+        { documentId: String(state.documentId), unresolvedTitles }
       )
     );
 

@@ -100,7 +100,7 @@ export async function completionNode(
          WHERE o.title IN $titles
          OPTIONAL MATCH (pre:Objective {documentId: $documentId})-[:PREREQUISITE_FOR]->(o)
          RETURN o.title AS objective, collect(pre.title) AS prerequisites`,
-        { documentId: state.documentId, titles }
+        { documentId: String(state.documentId), titles }
       )
     );
     return result.records.map((r) => ({
