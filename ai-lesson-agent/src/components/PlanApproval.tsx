@@ -24,6 +24,8 @@ export function PlanApproval({
   const parsed = parsePlan(plan);
   const [objectives, setObjectives] = useState<string[]>(parsed.objectives);
   const [newObj, setNewObj] = useState("");
+  const [editingIdx, setEditingIdx] = useState<number | null>(null);
+  const [editValue, setEditValue] = useState("");
 
   function remove(i: number) {
     setObjectives((prev) => prev.filter((_, idx) => idx !== i));
@@ -34,6 +36,18 @@ export function PlanApproval({
     if (!trimmed) return;
     setObjectives((prev) => [...prev, trimmed]);
     setNewObj("");
+  }
+
+  function startEdit(i: number) {
+    setEditingIdx(i);
+    setEditValue(objectives[i]);
+  }
+
+  function commitEdit() {
+    if (editingIdx === null) return;
+    const trimmed = editValue.trim();
+    if (trimmed) setObjectives((prev) => prev.map((o, i) => i === editingIdx ? trimmed : o));
+    setEditingIdx(null);
   }
 
   function approve() {
@@ -62,7 +76,22 @@ export function PlanApproval({
                 <span className="flex-shrink-0 w-6 h-6 rounded-md bg-teal-100 text-teal-700 text-xs font-bold flex items-center justify-center mt-0.5">
                   {i + 1}
                 </span>
-                <span className="flex-1 text-sm text-stone-700 leading-snug">{obj}</span>
+                {editingIdx === i ? (
+                  <input
+                    autoFocus
+                    value={editValue}
+                    onChange={(e) => setEditValue(e.target.value)}
+                    onKeyDown={(e) => { if (e.key === "Enter") commitEdit(); if (e.key === "Escape") setEditingIdx(null); }}
+                    onBlur={commitEdit}
+                    className="flex-1 text-sm text-stone-700 leading-snug bg-stone-50 border border-teal-300 rounded px-1 focus:outline-none"
+                  />
+                ) : (
+                  <span
+                    className="flex-1 text-sm text-stone-700 leading-snug cursor-text hover:text-teal-700 transition-colors"
+                    onClick={() => startEdit(i)}
+                    title="Click to edit"
+                  >{obj}</span>
+                )}
                 <button
                   onClick={() => remove(i)}
                   className="flex-shrink-0 text-stone-300 hover:text-red-400 transition-colors opacity-0 group-hover:opacity-100"

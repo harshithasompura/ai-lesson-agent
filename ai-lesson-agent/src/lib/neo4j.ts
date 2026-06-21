@@ -5,7 +5,7 @@ const driver: Driver = neo4j.driver(
   neo4j.auth.basic(process.env.NEO4J_USERNAME!, process.env.NEO4J_PASSWORD!)
 );
 
-// ponytail: timeout wrapper — CONSTITUTION §Principle 4 requires ~1.5s limit + fallback
+// ponytail: timeout wrapper — 8s for cold Vercel→Neo4j TCP; CONSTITUTION §Principle 4
 export async function runNeo4j<T>(
   fn: (session: Session) => Promise<T>,
   fallback: T
@@ -15,11 +15,16 @@ export async function runNeo4j<T>(
     return await Promise.race([
       fn(session),
       new Promise<T>((_, reject) =>
-        setTimeout(() => reject(new Error("neo4j timeout")), 1500)
+        setTimeout(() => reject(new Error("neo4j timeout")), 8000)
       ),
     ]);
   } catch (err) {
-    console.error("[neo4j] fallback triggered:", err);
+    console.error("[neo4j] fallback triggered:", {
+      message: err instanceof Error ? err.message : String(err),
+      uri: process.env.NEO4J_URI ? "set" : "MISSING",
+      user: process.env.NEO4J_USERNAME ? "set" : "MISSING",
+      pass: process.env.NEO4J_PASSWORD ? "set" : "MISSING",
+    });
     return fallback;
   } finally {
     await session.close();

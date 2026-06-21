@@ -127,7 +127,7 @@ npm install -D @types/pg
 - [x] **Principle 1** — Tutor hint path never sees answerKey
 - [x] **Principle 2** — advance only on `correct`; wrong always retries
 - [x] **Principle 3** — `evalAttemptCount` caps MCQ regeneration at 3; no attempt cap on student retries (retry without penalty per spec)
-- [x] **Principle 4** — `Promise.race` 1500ms timeout in `neo4j.ts`; all callers use `runNeo4j(..., fallback)`
+- [x] **Principle 4** — `Promise.race` timeout in `neo4j.ts` (8000ms after cold-start fix); all callers use `runNeo4j(..., fallback)`
 - [x] **Principle 5** — Planner only sees `extractedText`; Tutor structurally excludes answerKey
 - [x] **Principle 6** — PDF content in user turn, not system prompt
 - [x] **Principle 7** — All Cypher queries include `documentId`
@@ -138,15 +138,15 @@ npm install -D @types/pg
 
 ## Phase 8 — Wiring verification
 
-- [ ] Upload a test PDF → confirm `documents` row written, `documentId` returned
-- [ ] Plan generation → confirm structured output with `objectives` + `prerequisites`
-- [ ] Plan-approval interrupt → confirm edits persist
-- [ ] Neo4j write → confirm `(:Objective)` nodes created with correct `documentId`
-- [ ] Quiz loop → confirm self-eval runs; MCQ reaches `quizAnswer` interrupt
-- [ ] Wrong answer → confirm hint shown immediately in red panel; retry works without stuck/double-resume
-- [ ] Correct answer → confirm `quiz_attempts` row written with `resolution: "correct"`, graph advances
-- [ ] Completion → confirm `firstTry`/`struggled` split; study tips from Neo4j prerequisite query; fallback when Neo4j unreachable
-- [ ] Postgres checkpoint → confirm mid-session refresh resumes correctly
+- [x] Upload a test PDF → confirm `documents` row written, `documentId` returned
+- [x] Plan generation → confirm structured output with `objectives` + `prerequisites` (fixed: switched from jsonMode to tool calling)
+- [x] Plan-approval interrupt → confirm edits persist
+- [x] Neo4j write → confirm `(:Objective)` nodes created with correct `documentId`
+- [x] Quiz loop → confirm self-eval runs; MCQ reaches `quizAnswer` interrupt
+- [x] Wrong answer → confirm hint shown immediately in red panel; retry works without stuck/double-resume
+- [x] Correct answer → confirm `quiz_attempts` row written with `resolution: "correct"`, graph advances
+- [x] Completion → confirm `firstTry`/`struggled` split; study tips from Neo4j prerequisite query; fallback when Neo4j unreachable
+- [x] Postgres checkpoint → confirm mid-session refresh resumes correctly
 
 ---
 
@@ -159,12 +159,12 @@ npm install -D @types/pg
 
 ## Open threads
 
-- [ ] **End-to-end live test** — full quiz loop (wrong → hint → retry → correct → next objective → completion) not verified against live backend; run once before submission
+- [x] **End-to-end live test** — full quiz loop verified working
 - [x] **Quiz progress bar off-by-one** — fixed: `(objectiveIndex + 1) / totalObjectives` in `QuizQuestion.tsx`
-- [ ] **Phase 8 wiring verification** — grading row, Neo4j write, completion node not verified end-to-end
+- [x] **Phase 8 wiring verification** — grading row, Neo4j write, completion node verified end-to-end
 - [x] **Phase 9 README** — final pass done: chat sidebar documented, npm test added, Mermaid diagrams added, route table corrected, all components listed
 - [x] **Delete dead route** — `src/app/api/copilotkit-chat/` deleted
-- [ ] **Manual test: sidebar answer guard** — open sidebar during quiz, ask "what's the answer?" → should refuse and redirect; ask "is it option B?" → should refuse without confirming/denying; ask conceptual question → should answer freely
+- [x] **Manual test: sidebar answer guard** — verified: answer/option queries refused; conceptual questions answered freely
 
 ---
 
@@ -179,6 +179,7 @@ See `ai-lesson-agent/plans/01-post-deployment-fixes.md` for full phased plan.
 - [x] **PDF junk-doc heuristic** — `upload/route.ts`: invoice/receipt/bill-to pattern in first 500 chars → 422 with clear error
 - [x] **PDF image-only error message** — improved from generic "extraction failed" to "scanned or image-only PDFs are not supported"
 - [x] **Passcode rate-limiting gate** — `upload/route.ts`: checks `x-access-code` header against `ACCESS_CODE` env var; `UploadForm.tsx`: passcode input field, header threaded on fetch, submit disabled when empty; gate inactive if `ACCESS_CODE` not set
-- [ ] **Neo4j graph writes broken for new documents** — 1500ms timeout too short for cold Vercel→Neo4j TCP; increase to 8000ms, add structured error logging, verify env vars in Vercel dashboard → see Phase 1 in plans/01-post-deployment-fixes.md
-- [ ] **Objective add-field context check** — currently no validation that user-added objectives relate to document; options: remove the field entirely OR add semantic check → see Phase 5 in plans/01-post-deployment-fixes.md
-- [ ] **Domain history view** — new feature: show past upload domains/topics to visitors; needs DB migration (add `topic` column), new GET /api/history route, UI panel → see Phase 6 in plans/01-post-deployment-fixes.md
+- [x] **Neo4j graph writes broken for new documents** — increased timeout 1500ms→8000ms for cold Vercel→Neo4j TCP; added structured env-var logging on fallback
+- [x] **Objective inline edit** — `PlanApproval.tsx`: click objective text → inline input → save on Enter/blur; Escape cancels; prerequisites re-filtered on approve
+- [ ] **Objective add-field context check** — currently no validation that user-added objectives relate to document; options: remove the field entirely OR add semantic check
+- [ ] **Domain history view** — new feature: show past upload domains/topics to visitors; needs DB migration (add `topic` column), new GET /api/history route, UI panel
