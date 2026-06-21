@@ -244,7 +244,9 @@ export default function Home() {
             <div className="flex flex-col items-center gap-4 py-16">
               <Spinner />
               <p className="text-stone-600 text-sm">
-                Preparing question {state.currentObjectiveIndex + 1} of {state.objectives.length}…
+                {state.evalAttemptCount > 0
+                  ? `Refining question… (attempt ${state.evalAttemptCount + 1} of 3)`
+                  : `Preparing question ${state.currentObjectiveIndex + 1} of ${state.objectives.length}…`}
               </p>
             </div>
           ) : null}
