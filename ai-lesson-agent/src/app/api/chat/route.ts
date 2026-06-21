@@ -1,7 +1,8 @@
-import Anthropic from "@anthropic-ai/sdk";
+import { ChatAnthropic } from "@langchain/anthropic";
+import { HumanMessage, AIMessage, SystemMessage } from "@langchain/core/messages";
 import { NextRequest, NextResponse } from "next/server";
 
-const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+const anthropic = new ChatAnthropic({ model: "claude-haiku-4-5-20251001", maxTokens: 512 });
 
 // CONSTITUTION §Principle 1: route accepts no answerKey — structural isolation
 const TUTOR_SYSTEM = `You are a study assistant helping a student understand lesson material.
@@ -36,23 +37,21 @@ export async function POST(req: NextRequest) {
     ? `${TUTOR_SYSTEM}\n\nCurrent quiz context (no answer key):\n${contextLines}`
     : TUTOR_SYSTEM;
 
-  const stream = anthropic.messages.stream({
-    model: "claude-haiku-4-5-20251001",
-    max_tokens: 512,
-    system: systemPrompt,
-    messages,
-  });
+  const lcMessages = [
+    new SystemMessage(systemPrompt),
+    ...messages.map((m) =>
+      m.role === "user" ? new HumanMessage(m.content) : new AIMessage(m.content)
+    ),
+  ];
+
+  const stream = await anthropic.stream(lcMessages);
 
   const encoder = new TextEncoder();
   const readable = new ReadableStream({
     async start(controller) {
       for await (const chunk of stream) {
-        if (
-          chunk.type === "content_block_delta" &&
-          chunk.delta.type === "text_delta"
-        ) {
-          controller.enqueue(encoder.encode(chunk.delta.text));
-        }
+        const text = typeof chunk.content === "string" ? chunk.content : "";
+        if (text) controller.enqueue(encoder.encode(text));
       }
       controller.close();
     },

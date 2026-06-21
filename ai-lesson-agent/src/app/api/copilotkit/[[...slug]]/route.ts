@@ -4,10 +4,7 @@ import {
   copilotRuntimeNextJSAppRouterEndpoint,
 } from "@copilotkit/runtime";
 import { LangGraphAgent } from "@copilotkit/runtime/langgraph";
-import Anthropic from "@anthropic-ai/sdk";
 import { NextRequest } from "next/server";
-
-const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
 const LANGGRAPH_URL =
   process.env.LANGGRAPH_DEPLOYMENT_URL ?? "http://localhost:3000/api/langgraph";
@@ -25,7 +22,7 @@ const runtime = new CopilotRuntime({
 export const POST = async (req: NextRequest) => {
   const { handleRequest } = copilotRuntimeNextJSAppRouterEndpoint({
     runtime,
-    serviceAdapter: new AnthropicAdapter({ anthropic }),
+    serviceAdapter: new AnthropicAdapter(),
     endpoint: "/api/copilotkit",
   });
 
