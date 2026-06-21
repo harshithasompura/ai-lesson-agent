@@ -41,10 +41,11 @@ The system is a Next.js app with a LangGraph agent backend and CopilotKit runtim
 ```mermaid
 graph LR
     Browser["Browser\n(Next.js UI)"] -->|HTTP + SSE| CK["CopilotKit Runtime\n/api/copilotkit"]
-    CK -->|LangGraph HTTP| Graph["LangGraph Agent\n/api/langgraph"]
+    CK -->|"LangGraph HTTP\n(LANGGRAPH_DEPLOYMENT_URL)"| Graph["LangGraph Agent\n/api/langgraph"]
     Graph -->|checkpoints| PG[("Postgres\nSupabase")]
     Graph -->|concept edges| Neo4j[("Neo4j Aura")]
     Graph -->|LLM calls| Claude["Anthropic Claude"]
+    Graph -->|traces · optional| LS["LangSmith\n(LANGSMITH_API_KEY)"]
     Browser -->|PDF upload| Upload["/api/upload"]
     Upload --> PG
     Browser -->|quiz chat| Chat["/api/chat\n(answer-guarded)"]
@@ -149,7 +150,19 @@ COPILOT_CLOUD_PUBLIC_API_KEY=cpk-...
 
 # Access Code to proceed with the lesson plan and quiz
 ACCESS_CODE=anything-you-want
+
+# LangGraph deployment URL (defaults to local /api/langgraph when unset)
+LANGGRAPH_DEPLOYMENT_URL=http://localhost:3000/api/langgraph
+
+# LangSmith — optional, enables agent tracing and eval dashboards
+LANGSMITH_API_KEY=lsv2_...
 ```
+
+### Observability
+
+Set `LANGSMITH_API_KEY` to stream agent traces to [LangSmith](https://smith.langchain.com) — token costs, latency, and per-node inputs/outputs visible per run. Optional; the app runs without it (tracing silently disabled).
+
+`LANGGRAPH_DEPLOYMENT_URL` defaults to `http://localhost:3000/api/langgraph` (the local Next.js adapter). Point it at a LangGraph Cloud deployment URL to run the graph remotely instead.
 
 ### Installation & Setup
 
@@ -196,6 +209,18 @@ The plan approval screen lets users add custom objectives via an inline text fie
 **Current behaviour:** harmless — the quiz generation will just produce questions around whatever objectives are present, even if they don't match the source material.
 
 **Future improvement:** add a server-side semantic check that compares a new/edited objective against the document summary before accepting it, or restrict the UI to deletion-only (users curate the LLM-generated list rather than authoring from scratch).
+
+### Page refresh mid-quiz loses chat history
+
+The LangGraph graph state (objectives, answers, progress) persists across refreshes via Postgres checkpoints — the quiz resumes correctly. However, the StudySidebar chat history is held in React component state and is not persisted. Refreshing mid-quiz clears all prior chat messages; the sidebar restarts blank.
+
+**Future improvement:** store chat messages in Postgres (keyed by `threadId`) and rehydrate on mount.
+
+### Page refresh before quiz start restarts from upload
+
+If the user refreshes before completing plan approval and starting the quiz, the session returns to the upload screen. There is no "resume pending session" flow.
+
+**Future improvement:** detect an existing in-progress `threadId` in Postgres on load and offer to resume from the last checkpoint.
 
 ### Domain / learner history view
 
