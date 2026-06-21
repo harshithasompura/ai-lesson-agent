@@ -6,6 +6,7 @@ import { TextMessage, Role } from "@copilotkit/runtime-client-gql";
 import UploadForm from "@/components/UploadForm";
 import { PlanApproval } from "@/components/PlanApproval";
 import { QuizQuestion } from "@/components/QuizQuestion";
+import { StudySidebar } from "@/components/StudySidebar";
 import { GraphStateType } from "@/agent/state";
 
 type Step = "upload" | "plan" | "quiz";
@@ -222,7 +223,8 @@ export default function Home() {
       {/* Post-upload screens: show step rail */}
       {documentId && (
         <div className="w-full max-w-2xl animate-fade-in">
-          <StepRail current={activeStep} />
+          {/* Hide step rail during generation — only show when there's actionable UI */}
+          {(showPlanApproval || showQuiz || isComplete) && <StepRail current={activeStep} />}
 
           {/* Generating plan */}
           {running && !state.planApproved && (
@@ -334,6 +336,13 @@ export default function Home() {
             </div>
           )}
         </div>
+      )}
+
+      {showQuiz && (
+        <StudySidebar
+          currentQuestion={state.currentQuestion || null}
+          objective={state.objectives?.[state.currentObjectiveIndex] ?? null}
+        />
       )}
     </main>
   );
