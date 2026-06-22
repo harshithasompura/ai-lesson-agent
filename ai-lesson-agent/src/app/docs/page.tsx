@@ -252,9 +252,6 @@ export default function DocsPage() {
 
       </main>
 
-      <footer className="border-t border-stone-200 py-8 text-center text-xs text-stone-400">
-        AI Lesson Agent · Built as a Senior AI Agents Engineer assessment
-      </footer>
     </div>
   );
 }
