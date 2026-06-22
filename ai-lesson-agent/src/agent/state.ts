@@ -18,6 +18,10 @@ export const GraphState = Annotation.Root({
   currentQuestion: Annotation<string>(),
   // ponytail: answerKey kept in state but Tutor node must never receive it — CONSTITUTION §Principle 1
   answerKey: Annotation<string>(),
+  sourceExcerpts: Annotation<string[]>({
+    reducer: (_, next) => next,
+    default: () => [],
+  }),
   attemptCount: Annotation<number>(),
   evalAttemptCount: Annotation<number>(),
   // selectedIndex from interrupt; read by gradingNode; avoids sentinel in attempts reducer
@@ -33,6 +37,10 @@ export const GraphState = Annotation.Root({
     default: () => null,
   }),
   lastHint: Annotation<string | null>({
+    value: (_, next) => next,
+    default: () => null,
+  }),
+  lastHintSourceRef: Annotation<string | null>({
     value: (_, next) => next,
     default: () => null,
   }),

@@ -4,31 +4,50 @@ Build an AI learning agent that transforms a PDF into an interactive lesson.
 
 ---
 
-## Why this is different
+## The Problem
 
-Most "AI quiz" apps are a single LLM call: send text, get questions back, done. This system is an **agent** — a stateful process that pauses for human input, resumes, makes decisions across multiple steps, and enforces rules structurally (not just by prompting).
+Single-LLM quiz apps have three structural problems:
 
-Two things make it genuinely different:
+**1. No enforcement.** The AI can be talked into skipping questions, replaying hints, or revealing answers. "Be strict" is a prompt instruction, not a guarantee.
 
-**1. The quiz can't be skipped or cheated.** Progression through each question is enforced by the graph's structure — there is no action the AI or the user can take to skip a question without submitting an answer. The AI can't decide "let's move on," because there's no graph edge for it. This is a different kind of guarantee than "we told the AI to be strict."
+**2. No isolation.** The same context that knows the answer also gives the hint. One prompt injection is enough to leak it.
 
-**2. The hint system can't leak the answer.** The agent that gives hints (`Tutor Agent`) is structurally prevented from seeing the answer key — it's never in its context, so it literally cannot reveal it no matter how the user asks. This is different from prompt-only "don't tell them the answer," which can be manipulated.
+**3. No ordering.** Questions are generated in list order, not dependency order. A student gets tested on advanced concepts before foundational ones.
 
 ---
 
-## Why three agents, not one
+## What this does differently
 
-A single AI model is reused across the whole session, but it runs as **three separate agents** — each with its own identity, its own instructions, and its own restricted view of what's happening.
+This system is an **agent** — a stateful process that pauses for human input, resumes, makes decisions across multiple steps, and enforces rules structurally (not just by prompting).
+
+What it guarantees structurally:
+
+- **Quiz cannot be skipped** — no graph edge exists for it. There is no action the AI or user can take to skip a question without submitting an answer.
+- **Answer key cannot leak to the hint path** — the Tutor Agent is constructed without it in context, not just instructed to avoid it.
+- **Questions follow prerequisite order** — Neo4j graph with `PREREQUISITE_FOR` edges; degrades to list order if DB is cold.
+- **Questions self-evaluate before a student sees them** — Haiku judge scores each MCQ 0–5, max 3 regeneration attempts.
+
+---
+
+## Design decisions
+
+### Why three agents, not one
+
+A single agent can't structurally isolate the answer key from the hint path. With three agents, the Tutor Agent is constructed without `answerKey` ever in its context — not a prompt instruction, a construction guarantee. The agent that gives hints literally cannot see what it was never given.
 
 | Agent | What it does | What it never sees |
 |---|---|---|
 | **Planner Agent** | Reads the PDF, builds the lesson plan | Quiz answers, answer keys |
-| **Quiz Agent** | Writes questions, checks its own work, grades answers | — (holds the answer key) |
+| **Quiz Agent** | Writes questions, self-evaluates, grades answers | — (holds the answer key) |
 | **Tutor Agent** | Gives hints on wrong answers, writes the final recap | The answer key — by design |
 
-The reason: if one agent did everything, keeping the answer key away from the hint logic would be a prompt instruction — something the user could potentially argue around. With three agents, the Tutor Agent is constructed without the answer key in its context. It can't leak what it was never given.
+### Why Neo4j for prerequisites
 
-The Quiz Agent also **self-evaluates its own questions** before showing them. After generating a question, a second pass scores it: is the correct answer unambiguous? Are the wrong answers plausibly wrong? Does it match the learning objective? If not, it regenerates with the critique fed back in (`critiqueMessages` — prior self-eval feedback injected into the next generation call), capped at 3 attempts. This catches bad questions before a human ever sees them.
+Prerequisite relationships are a graph, not a list. `PREREQUISITE_FOR` edges let `selectObjective` pick the question with fewest unresolved dependencies — a topological sort. The system degrades gracefully: if Neo4j is cold (8s timeout), it falls back to list-order without blocking the quiz. A flat list in Postgres couldn't express or query this ordering.
+
+### Why structural enforcement over prompting
+
+Prompts can be argued around. Graph edges can't. There is no action the AI or user can take to skip a question without submitting an answer — no edge exists for it. The Tutor Agent has no code path to the answer key. These are construction guarantees, not behavioral instructions.
 
 ---
 
@@ -48,6 +67,9 @@ graph LR
     Graph -->|traces · optional| LS["LangSmith\n(LANGSMITH_API_KEY)"]
     Browser -->|PDF upload| Upload["/api/upload"]
     Upload --> PG
+    Browser -->|objective validation| VObjAPI["/api/validate-objective"]
+    VObjAPI --> Claude
+    VObjAPI --> PG
     Browser -->|quiz chat| Chat["/api/chat\n(answer-guarded)"]
     Chat --> Claude
 ```
@@ -69,7 +91,7 @@ flowchart TD
     H -->|answer submitted| I[grading]
     I -->|correct| J[resultNode]
     J -->|more objectives| E
-    J -->|all done| K([completion · recap])
+    J -->|all done| K([completion · recap\nNeo4j prereq enrichment])
     I -->|wrong| L[hintNode]
     L --> H
 
@@ -105,18 +127,19 @@ flowchart TD
 | `src/app/api/langgraph/[...path]/route.ts` | LangGraph HTTP adapter — exposes local compiled graph |
 | `src/app/api/test-db/route.ts` | DB + Neo4j connectivity health-check |
 | `src/app/api/upload/route.ts` | PDF upload, text extraction, word-count + junk-doc validation |
-| `src/components/CopilotProvider.tsx` | Client-side CopilotKit context provider |
-| `src/components/PlanApproval.tsx` | Plan review UI — editable objectives, inline edit, approve resumes graph |
+| `src/app/api/validate-objective/route.ts` | Validates user-typed objectives against document content via Claude Haiku; returns `{ valid, hint }` |
+| `src/components/CopilotProvider.tsx` | Client-side CopilotKit context provider — keyed per session so "Start new lesson" forces a fresh CopilotKit thread |
+| `src/components/PlanApproval.tsx` | Plan review UI — editable objectives, inline edit, semantic validation of new objectives against source PDF, approve resumes graph |
 | `src/components/QuizQuestion.tsx` | MCQ UI — wrong-answer panel, hint display, progress bar |
 | `src/components/StudySidebar.tsx` | Chat sidebar — independent from agent hint path; withholds answers until quiz completion |
 | `src/components/UploadForm.tsx` | PDF upload form with passcode gate and validation feedback |
 
 ### Data flow
 
-1. User uploads PDF → `/api/upload` validates (word count, junk-doc heuristic), extracts text, stores in Postgres, returns `documentId`
+1. User uploads PDF → `/api/upload` validates (word count: min 100, max 15,000 words; junk-doc heuristic), extracts text, stores in Postgres, returns `documentId`
 2. Frontend sends `documentId` to CopilotKit → agent starts, loads `extractedText` from Postgres
 3. **Planner Agent** runs `generatePlan` — one LLM call over full PDF text → structured output: `objectives[]` + `prerequisites[]`
-4. Graph hits `planApproval` interrupt → frontend detects via state poll, renders `PlanApproval` modal — user edits objectives inline
+4. Graph hits `planApproval` interrupt → frontend detects via state poll, renders `PlanApproval` modal — user edits objectives inline; newly typed or edited objectives are validated against the document via `/api/validate-objective` before approval is allowed
 5. User approves → frontend POSTs `command.resume` to LangGraph HTTP stream, drains SSE, syncs state
 6. `writeConceptGraph` filters prerequisites against edited plan, writes `(:Objective)-[:PREREQUISITE_FOR]->(:Objective)` to Neo4j (8s timeout + fallback to list order)
 7. **Quiz loop** per objective: `selectObjective` (Neo4j prereq ordering, list-order fallback) → **Quiz Agent** `generateMCQ` → `selfEval` (scores on unambiguous answer / plausible distractors / objective alignment; injects `critiqueMessages` and regenerates if below threshold, max 3 attempts) → `presentQuestion` interrupt
@@ -125,6 +148,65 @@ flowchart TD
 10. Correct → `resultNode` → advance to next objective or `completion`
 11. **Tutor Agent** `completionNode` reads `quiz_attempts` from Postgres, splits `firstTry` vs `struggled`, enriches study tips via Neo4j prerequisite query (falls back to flat recap on failure)
 12. **StudySidebar** chat (`/api/chat`) runs in parallel throughout — separate from the agent's hint path; uses LangChain `ChatAnthropic` directly; withholds answer keys until `quizComplete` state is true, enforced server-side
+
+---
+
+## Evaluation
+
+### Self-eval quality gate
+
+Every MCQ passes through a second LLM call (`claude-haiku-4-5`) that scores it 0–5:
+- **5:** unambiguous correct answer, all distractors plausible, directly tests the objective
+- **3–4:** minor issues
+- **0–2:** serious issues (ambiguous answer, trivial distractors, objective drift)
+
+Pass threshold: ≥ 3/5. Max regeneration attempts: 3. MCQs that hit the cap proceed with a `console.warn` — the quiz never blocks on quality.
+
+### Runtime metrics tracked (Postgres)
+
+| Metric | Table |
+|--------|-------|
+| First-try correct rate per objective | `quiz_attempts` |
+| Avg attempts per objective | `quiz_attempts` |
+| Self-eval rounds per question | `mcq_eval_log` |
+| Questions that hit eval cap | `mcq_eval_log.passed_cap` |
+
+### Known eval gaps
+
+- Citation grounding: `sourcePassage` is verified to appear verbatim in `extractedText` (normalised match) before the MCQ passes `selfEval`; if absent, triggers regeneration with critique. No byte-match against the raw PDF binary — `extractedText` is the extracted plain text
+- Self-eval judge uses the same model family as the generator — correlated failures possible
+- No cross-session aggregate dashboard (future: LangSmith custom evals)
+
+---
+
+## Failure modes
+
+| Failure | Behaviour |
+|---------|-----------|
+| Neo4j cold-start / timeout (~8s) | Falls back to list-order objective selection; quiz continues |
+| `selfEval` cap reached (3 attempts) | Proceeds with best available MCQ; logs warning |
+| PDF < 100 words or > 15,000 words | Rejected at upload with user-facing message |
+| Junk / non-educational PDF | Heuristic rejection at upload |
+| User types off-domain objective | Blocked at plan approval — `/api/validate-objective` checks against document content and shows a hint |
+| Page refresh mid-quiz | Graph state restored from Postgres; chat history lost (in-memory only) |
+| Page refresh before plan approval | Session returns to upload screen; no resume flow yet |
+| LangGraph checkpoint missing | Thread starts fresh; no recovery path |
+
+---
+
+## Why this is hard
+
+**Stateful interrupts across process restarts.** LangGraph graphs pause mid-execution waiting for human input. The state must survive process restarts, deployments, and cold starts. Postgres checkpointer handles this — but it means every interrupt value must be serialisable and every resume must reconstruct exact graph position.
+
+**Answer-key isolation without a trust boundary.** The answer key exists in graph state that all nodes can technically read. Keeping it away from the Tutor Agent required routing it through a path the tutor node never reaches — verified by construction (the node never receives the key in its arguments) not just by instruction.
+
+**Self-eval termination guarantee.** A quality loop that can run forever is a production incident. The cap at 3 attempts is a hard ceiling: if the LLM judge keeps failing, the quiz proceeds rather than blocks. Getting this wrong in either direction — too strict (blocks) or too loose (no cap) — breaks the user flow.
+
+**Graceful graph degradation.** Two external databases (Postgres, Neo4j) can fail or time out mid-quiz. Every external call has a defined fallback — list-order for Neo4j, error propagation for Postgres. The graph never silently hangs.
+
+**Streaming state to React without framework support.** CopilotKit's standard polling doesn't fit LangGraph's interrupt model. Resume requires posting `Command({ resume: value })` directly to the LangGraph HTTP stream and draining SSE until the next interrupt — implemented in `page.tsx` as a custom streaming loop.
+
+---
 
 ### Environment variables
 
@@ -201,14 +283,6 @@ Set `LANGSMITH_API_KEY` to stream agent traces to [LangSmith](https://smith.lang
 ---
 
 ## Known Issues & Future Improvements
-
-### Objective field — no context validation
-
-The plan approval screen lets users add custom objectives via an inline text field. There is no validation that a newly typed objective relates to the uploaded document — any free-form text is accepted. Existing objectives (generated by the planner from the PDF) are also editable inline, so a user can overwrite them with unrelated content.
-
-**Current behaviour:** harmless — the quiz generation will just produce questions around whatever objectives are present, even if they don't match the source material.
-
-**Future improvement:** add a server-side semantic check that compares a new/edited objective against the document summary before accepting it, or restrict the UI to deletion-only (users curate the LLM-generated list rather than authoring from scratch).
 
 ### Page refresh mid-quiz loses chat history
 

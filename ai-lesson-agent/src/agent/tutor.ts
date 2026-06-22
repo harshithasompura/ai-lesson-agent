@@ -8,6 +8,7 @@ import { GraphStateType } from "./state";
 
 const HintSchema = z.object({
   hint: z.string(),
+  sourceRef: z.string().optional(),
 });
 
 // ── Models ─────────────────────────────────────────────────────────────────
@@ -28,7 +29,8 @@ Rules:
 - Reference the learning objective
 - Keep hint to 1-2 sentences
 - Do not repeat the question back verbatim
-- Respond with a JSON object: {"hint": string}`;
+- If a source passage is provided, set sourceRef to a topic/section label only (e.g. "Nasal cavity" or "Respiratory System > Filtering function") — never quote or paraphrase the passage, that gives away the answer
+- Respond with a JSON object: {"hint": string, "sourceRef": string | undefined}`;
 
 // ── Nodes ──────────────────────────────────────────────────────────────────
 
@@ -45,16 +47,30 @@ export async function hintNode(
     .map((a) => JSON.parse(a))
     .find((a) => a.objectiveIndex === state.currentObjectiveIndex);
 
+  // Fetch source_passage from DB — CONSTITUTION §Principle 1: source comes from DB, not answerKey
+  const { rows: passageRows } = await db.query<{ source_passage: string }>(
+    `SELECT source_passage FROM quiz_attempts
+     WHERE document_id = $1 AND objective_index = $2
+       AND source_passage IS NOT NULL
+     ORDER BY attempt_number DESC LIMIT 1`,
+    [state.documentId, state.currentObjectiveIndex]
+  );
+  const sourcePassage = passageRows[0]?.source_passage ?? null;
+
+  const sourceContext = sourcePassage
+    ? `\nSource passage from the document: "${sourcePassage}"\nUse this to set sourceRef in your response.`
+    : "";
+
   // CONSTITUTION §Principle 1: answerKey NOT passed to prompt
   const result = await tutorModel.invoke([
     { role: "system", content: HINT_SYSTEM },
     {
       role: "user",
-      content: `Objective: ${objective}\nQuestion: ${question}\nChoices: ${JSON.stringify(choices)}\nStudent selected: ${choices[lastAttempt?.selectedIndex ?? 0]}\nAttempts so far: ${state.attemptCount}\n\nWrite a hint.`,
+      content: `Objective: ${objective}\nQuestion: ${question}\nChoices: ${JSON.stringify(choices)}\nStudent selected: ${choices[lastAttempt?.selectedIndex ?? 0]}\nAttempts so far: ${state.attemptCount}${sourceContext}\n\nWrite a hint.`,
     },
   ]);
 
-  return { lastHint: result.hint };
+  return { lastHint: result.hint, lastHintSourceRef: result.sourceRef ?? null };
 }
 
 /** Final recap node. Reads from Postgres (CONSTITUTION §Principle 9). */

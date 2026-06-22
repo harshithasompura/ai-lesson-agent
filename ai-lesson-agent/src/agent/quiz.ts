@@ -5,6 +5,15 @@ import { runNeo4j } from "@/lib/neo4j";
 import db from "@/lib/db";
 import { GraphStateType } from "./state";
 
+// ── Helpers ───────────────────────────────────────────────────────────────
+
+async function logEval(documentId: string, objectiveIndex: number, evalAttempts: number, score: number, passedCap: boolean) {
+  await db.query(
+    `INSERT INTO mcq_eval_log (document_id, objective_index, eval_attempts, final_score, passed_cap) VALUES ($1, $2, $3, $4, $5)`,
+    [documentId, objectiveIndex, evalAttempts, score, passedCap]
+  );
+}
+
 // ── Schemas ────────────────────────────────────────────────────────────────
 
 const MCQSchema = z.object({
@@ -12,6 +21,7 @@ const MCQSchema = z.object({
   choices: z.array(z.string()).length(4),
   correctIndex: z.number().int().min(0).max(3),
   explanation: z.string(),
+  sourcePassage: z.string(), // verbatim excerpt from document
 });
 
 const EvalSchema = z.object({
@@ -35,14 +45,16 @@ const evalModel = new ChatAnthropic({
 
 // ── Prompts ────────────────────────────────────────────────────────────────
 
-const QUIZ_SYSTEM = `You are the Quiz Agent. Your job is to write one multiple-choice question (MCQ) for a given learning objective.
+const QUIZ_SYSTEM = `You are the Quiz Agent. Your job is to write one multiple-choice question (MCQ) for a given learning objective, grounded in the provided document text.
 
 Rules:
 - One unambiguously correct answer only
 - Distractors must be plausible — not obviously wrong
 - Question must directly test the stated objective
 - Do not include "all of the above" or "none of the above"
-- Respond with a JSON object: {"question": string, "choices": [string, string, string, string], "correctIndex": number, "explanation": string}`;
+- sourcePassage must be a verbatim excerpt (≤ 3 sentences) from the document that directly supports the correct answer
+- If no single passage supports it, quote the most relevant sentence
+- Respond with a JSON object: {"question": string, "choices": [string, string, string, string], "correctIndex": number, "explanation": string, "sourcePassage": string}`;
 
 const EVAL_SYSTEM = `You are a MCQ quality evaluator. Score the question on a 0–5 scale:
 - 5: unambiguous correct answer, all distractors plausible, directly tests the objective
@@ -127,7 +139,7 @@ export async function generateMCQNode(
     { role: "system", content: QUIZ_SYSTEM },
     {
       role: "user",
-      content: `Approved lesson plan:\n${approvedPlan}\n\nCurrent objective:\n${objective}\n\nWrite one MCQ for this objective.`,
+      content: `Document text:\n${(state.extractedText ?? "").slice(0, 8000)}\n\nApproved lesson plan:\n${approvedPlan}\n\nObjective: ${objective}\n\nWrite one MCQ grounded in the document.`,
     },
     ...critiqueMessages,
     ...(critiqueMessages.length > 0
@@ -135,15 +147,25 @@ export async function generateMCQNode(
       : []),
   ]);
 
+  // Build updated sourceExcerpts: one slot per objective, set at currentObjectiveIndex
+  const excerpts = [...(state.sourceExcerpts ?? [])];
+  excerpts[state.currentObjectiveIndex] = mcq.sourcePassage ?? "";
+
   return {
     // currentQuestion holds display data only — no answer key
     currentQuestion: JSON.stringify({ question: mcq.question, choices: mcq.choices }),
     // answerKey isolated: Tutor Agent must never receive this — CONSTITUTION §Principle 1
-    answerKey: JSON.stringify({ correctIndex: mcq.correctIndex, explanation: mcq.explanation }),
+    answerKey: JSON.stringify({ correctIndex: mcq.correctIndex, explanation: mcq.explanation, sourcePassage: mcq.sourcePassage ?? "" }),
+    sourceExcerpts: excerpts,
     attemptCount: 0,
     evalAttemptCount: (state.evalAttemptCount ?? 0),
     lastHint: null,
   };
+}
+
+/** Normalise text for fuzzy passage matching — collapse whitespace, lowercase. */
+function normalise(s: string) {
+  return s.replace(/\s+/g, " ").trim().toLowerCase();
 }
 
 /** Score the generated MCQ. Below threshold and under cap → regenerate with critique. */
@@ -152,7 +174,31 @@ export async function selfEvalNode(
 ): Promise<Partial<GraphStateType>> {
   const objective = state.objectives[state.currentObjectiveIndex];
   const { question, choices } = JSON.parse(state.currentQuestion);
-  const { correctIndex } = JSON.parse(state.answerKey);
+  const { correctIndex, sourcePassage } = JSON.parse(state.answerKey);
+
+  // Shared attempt counter — used by both passage check and score check below
+  const nextEvalCount = (state.evalAttemptCount ?? 0) + 1;
+
+  // Verify sourcePassage is actually in the document before spending an LLM eval call.
+  if (sourcePassage && !normalise(state.extractedText ?? "").includes(normalise(sourcePassage))) {
+    if (nextEvalCount >= 3) {
+      // Cap reached even on passage check — proceed with warning
+      console.warn(`[quiz] sourcePassage not found in document for objective "${objective}". Cap reached, proceeding.`);
+      await logEval(state.documentId, state.currentObjectiveIndex, nextEvalCount, 0, true);
+      return { evalAttemptCount: nextEvalCount };
+    }
+    return {
+      currentQuestion: "",
+      answerKey: "",
+      evalAttemptCount: nextEvalCount,
+      messages: [
+        {
+          role: "assistant" as const,
+          content: `MCQ critique (attempt ${nextEvalCount}): The sourcePassage you quoted does not appear verbatim in the document. You must copy an exact passage from the document text — do not paraphrase or invent one.`,
+        } as never,
+      ],
+    };
+  }
 
   const evaluation = await evalModel.invoke([
     { role: "system", content: EVAL_SYSTEM },
@@ -163,17 +209,18 @@ export async function selfEvalNode(
   ]);
 
   if (evaluation.score >= EVAL_PASS_THRESHOLD) {
-    // Passes — proceed to present-question node
+    // Passes — log and proceed to present-question node
+    await logEval(state.documentId, state.currentObjectiveIndex, nextEvalCount, evaluation.score, false);
     return {};
   }
 
   // CONSTITUTION §Principle 3: cap at 3 total attempts (2 regenerations)
-  const nextEvalCount = (state.evalAttemptCount ?? 0) + 1;
   if (nextEvalCount >= 3) {
     // Past cap — proceed with best available MCQ, flag it
     console.warn(
       `[quiz] MCQ self-eval cap reached for objective "${objective}". Score: ${evaluation.score}. Proceeding.`
     );
+    await logEval(state.documentId, state.currentObjectiveIndex, nextEvalCount, evaluation.score, true);
     return { evalAttemptCount: nextEvalCount };
   }
 
@@ -224,7 +271,7 @@ export async function gradingNode(
   state: GraphStateType
 ): Promise<Partial<GraphStateType>> {
   const { question, choices } = JSON.parse(state.currentQuestion);
-  const { correctIndex, explanation } = JSON.parse(state.answerKey);
+  const { correctIndex, explanation, sourcePassage } = JSON.parse(state.answerKey);
 
   const selectedIndex = state.pendingAnswer!;
 
@@ -234,8 +281,8 @@ export async function gradingNode(
 
   await db.query(
     `INSERT INTO quiz_attempts
-       (document_id, objective_index, objective, question, choices, selected_index, correct_index, attempt_number, resolution)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+       (document_id, objective_index, objective, question, choices, selected_index, correct_index, attempt_number, resolution, source_passage)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
     [
       state.documentId,
       state.currentObjectiveIndex,
@@ -246,6 +293,7 @@ export async function gradingNode(
       correctIndex,
       newAttemptCount,
       resolution,
+      sourcePassage ?? null,
     ]
   );
 

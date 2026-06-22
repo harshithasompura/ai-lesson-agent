@@ -21,7 +21,10 @@ export function QuizQuestion({
   question,
   choices,
   hint,
+  sourceRef,
   result,
+  sourcePassage,
+  prerequisites,
   loading,
   objectiveIndex,
   totalObjectives,
@@ -31,7 +34,10 @@ export function QuizQuestion({
   question: string;
   choices: string[];
   hint?: string;
+  sourceRef?: string;
   result?: Result;
+  sourcePassage?: string;
+  prerequisites?: string[];
   loading?: boolean;
   objectiveIndex: number;
   totalObjectives: number;
@@ -83,7 +89,15 @@ export function QuizQuestion({
         </div>
       </div>
 
-      <p className="text-lg font-semibold text-stone-900 mb-6 leading-snug">{question}</p>
+      <p className="text-lg font-semibold text-stone-900 mb-2 leading-snug">{question}</p>
+      {prerequisites && prerequisites.length > 0 && (
+        <div className="flex flex-wrap gap-1.5 mb-5">
+          <span className="text-xs text-stone-400">Builds on:</span>
+          {prerequisites.map((p, i) => (
+            <span key={i} className="text-xs bg-stone-100 text-stone-500 rounded-full px-2 py-0.5">{p}</span>
+          ))}
+        </div>
+      )}
 
       {/* Choices */}
       <div className="space-y-2.5">
@@ -199,6 +213,12 @@ export function QuizQuestion({
             <p className="font-semibold text-green-700 text-sm">Correct!</p>
             {result.explanation && (
               <p className="text-sm text-green-900 mt-1 leading-relaxed">{result.explanation}</p>
+            )}
+            {sourcePassage && (
+              <div className="mt-3 border-t border-green-200 pt-2">
+                <p className="text-xs font-semibold text-green-600 mb-1">From the lesson:</p>
+                <p className="text-xs text-stone-600 italic leading-relaxed border-l-2 border-green-300 pl-2">{sourcePassage}</p>
+              </div>
             )}
             <button
               onClick={onContinue}

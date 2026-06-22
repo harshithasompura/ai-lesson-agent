@@ -6,6 +6,7 @@ import { GraphStateType } from "./state";
 const PlanSchema = z.object({
   objectives: z.array(z.string()).min(1),
   prerequisites: z.array(z.object({ from: z.string(), to: z.string() })),
+  objectiveExcerpts: z.array(z.string()).optional(),
 });
 
 type Plan = z.infer<typeof PlanSchema>;
@@ -24,7 +25,8 @@ Rules:
 - A prerequisite edge {from: A, to: B} means "A must be understood before B".
 - Produce between 3 and 8 objectives for a typical document.
 - Do not include quiz questions, answer keys, or student performance data.
-- Respond with a JSON object matching this schema: {"objectives": string[], "prerequisites": [{"from": string, "to": string}]}`;
+- For each objective, include a verbatim 1–2 sentence excerpt from the document that most directly supports it in the "objectiveExcerpts" array (same order as objectives).
+- Respond with a JSON object matching this schema: {"objectives": string[], "prerequisites": [{"from": string, "to": string}], "objectiveExcerpts": string[]}`;
 
 export async function generatePlanNode(
   state: GraphStateType

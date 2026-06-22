@@ -49,7 +49,7 @@ export default function UploadForm({ onUpload }: Props) {
     e.preventDefault();
     setDragging(false);
     const file = e.dataTransfer.files[0];
-    if (file?.type === "application/pdf") submit(file);
+    if (file && (file.type === "application/pdf" || file.name.endsWith(".pdf"))) submit(file);
     else setError("Only PDF files are supported");
   }
 
@@ -64,6 +64,7 @@ export default function UploadForm({ onUpload }: Props) {
     <form onSubmit={handleSubmit}>
       {/* Drop zone */}
       <div
+        onDragEnter={(e) => { e.preventDefault(); setDragging(true); }}
         onDragOver={(e) => { e.preventDefault(); setDragging(true); }}
         onDragLeave={() => setDragging(false)}
         onDrop={handleDrop}
@@ -81,7 +82,6 @@ export default function UploadForm({ onUpload }: Props) {
           ref={inputRef}
           type="file"
           accept="application/pdf"
-          required
           className="sr-only"
           onChange={handleFileChange}
         />

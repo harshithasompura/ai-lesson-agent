@@ -181,5 +181,12 @@ See `ai-lesson-agent/plans/01-post-deployment-fixes.md` for full phased plan.
 - [x] **Passcode rate-limiting gate** — `upload/route.ts`: checks `x-access-code` header against `ACCESS_CODE` env var; `UploadForm.tsx`: passcode input field, header threaded on fetch, submit disabled when empty; gate inactive if `ACCESS_CODE` not set
 - [x] **Neo4j graph writes broken for new documents** — increased timeout 1500ms→8000ms for cold Vercel→Neo4j TCP; added structured env-var logging on fallback
 - [x] **Objective inline edit** — `PlanApproval.tsx`: click objective text → inline input → save on Enter/blur; Escape cancels; prerequisites re-filtered on approve
-- [ ] **Objective add-field context check** — currently no validation that user-added objectives relate to document; options: remove the field entirely OR add semantic check
+- [x] **Objective add-field context check** — `/api/validate-objective` calls Claude Haiku against first 500 words of document; blocks approval + shows hint if off-domain; LLM-generated objectives skip validation
 - [ ] **Domain history view** — new feature: show past upload domains/topics to visitors; needs DB migration (add `topic` column), new GET /api/history route, UI panel
+
+## Session Bug Fixes (2026-06-22)
+
+- [x] **Drag-drop not recognising file** — `UploadForm.tsx`: added `onDragEnter` + `e.preventDefault()` (missing handler caused browsers to cancel drop); PDF type check now also accepts `.pdf` extension fallback
+- [x] **"Please select a file" after drag-drop** — `UploadForm.tsx`: removed `required` from hidden `<input>`; native browser validation was firing because drop doesn't populate the input element; button disabled guard (`!fileName`) already prevents empty submit
+- [x] **"Start new lesson" reuses stale CopilotKit thread** — split `Home` into `Root` (holds `sessionKey`) + `Home` (wrapped in `<CopilotProvider key={sessionKey}>`); clicking "Start new lesson" increments `sessionKey`, remounting CopilotKit with a fresh thread ID and clean agent state
+- [x] **Re-upload carries over previous session state** — `handleUpload` now does full state wipe (all 17 fields reset to initial values) instead of spreading stale `prev`; prevents old plan/objectives/questions bleeding into new session

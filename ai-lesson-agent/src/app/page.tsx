@@ -3,6 +3,7 @@
 import { useState, useCallback } from "react";
 import { useCoAgent, useCopilotChat } from "@copilotkit/react-core";
 import { TextMessage, Role } from "@copilotkit/runtime-client-gql";
+import { CopilotProvider } from "@/components/CopilotProvider";
 import UploadForm from "@/components/UploadForm";
 import { PlanApproval } from "@/components/PlanApproval";
 import { QuizQuestion } from "@/components/QuizQuestion";
@@ -65,7 +66,16 @@ function Spinner() {
   );
 }
 
-export default function Home() {
+export default function Root() {
+  const [sessionKey, setSessionKey] = useState(0);
+  return (
+    <CopilotProvider key={sessionKey}>
+      <Home onReset={() => setSessionKey((k) => k + 1)} />
+    </CopilotProvider>
+  );
+}
+
+function Home({ onReset }: { onReset: () => void }) {
   const [documentId, setDocumentId] = useState<string | null>(null);
   const [resuming, setResuming] = useState(false);
 
@@ -93,7 +103,26 @@ export default function Home() {
 
   function handleUpload(id: string) {
     setDocumentId(id);
-    setState((prev) => ({ ...prev!, documentId: id, extractedText: "" }));
+    setState({
+      documentId: id,
+      extractedText: "",
+      plan: "",
+      planApproved: false,
+      prerequisites: [],
+      objectives: [],
+      currentObjectiveIndex: 0,
+      currentQuestion: "",
+      answerKey: "",
+      attemptCount: 0,
+      evalAttemptCount: 0,
+      pendingAnswer: null,
+      lastResult: null,
+      attempts: [],
+      messages: [],
+      lastHint: null,
+      lastHintSourceRef: null,
+      sourceExcerpts: [],
+    });
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     sendMessage(new TextMessage({ id: crypto.randomUUID(), content: "__start__", role: Role.User }));
   }
@@ -236,7 +265,7 @@ export default function Home() {
 
           {/* Plan approval */}
           {showPlanApproval && (
-            <PlanApproval plan={state.plan} onApprove={handlePlanApprove} />
+            <PlanApproval plan={state.plan} documentId={documentId} onApprove={handlePlanApprove} />
           )}
 
           {/* Generating quiz / between questions */}
@@ -255,12 +284,19 @@ export default function Home() {
           {showQuiz && (() => {
             try {
               const { question, choices } = JSON.parse(state.currentQuestion);
+              const currentObj = state.objectives?.[state.currentObjectiveIndex] ?? "";
+              const prereqs = (state.prerequisites ?? [])
+                .filter((p: string) => p.endsWith(`→${currentObj}`))
+                .map((p: string) => p.split("→")[0]);
               return (
                 <QuizQuestion
                   question={question}
                   choices={choices}
                   hint={state.lastHint ?? undefined}
+                  sourceRef={state.lastHintSourceRef ?? undefined}
                   result={state.lastResult ?? undefined}
+                  sourcePassage={(state.sourceExcerpts ?? [])[state.currentObjectiveIndex] ?? undefined}
+                  prerequisites={prereqs}
                   loading={resuming}
                   objectiveIndex={state.currentObjectiveIndex}
                   totalObjectives={state.objectives.length}
@@ -331,7 +367,7 @@ export default function Home() {
 
               <button
                 className="w-full py-3 rounded-xl bg-teal-600 text-white font-medium hover:bg-teal-700 transition-colors"
-                onClick={() => setDocumentId(null)}
+                onClick={() => { setDocumentId(null); onReset(); }}
               >
                 Start a new lesson
               </button>

@@ -41,7 +41,24 @@ async function migratePostgres() {
         correct_index    INTEGER     NOT NULL,
         attempt_number   INTEGER     NOT NULL,
         resolution       TEXT,
+        source_passage   TEXT,
         created_at       TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      );
+    `);
+
+    // Idempotent: add source_passage if it doesn't exist yet (for pre-existing DBs)
+    await client.query(`
+      ALTER TABLE quiz_attempts ADD COLUMN IF NOT EXISTS source_passage TEXT;
+    `);
+
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS mcq_eval_log (
+        id               SERIAL PRIMARY KEY,
+        document_id      TEXT,
+        objective_index  INT,
+        eval_attempts    INT,
+        final_score      INT,
+        passed_cap       BOOLEAN
       );
     `);
 
