@@ -244,6 +244,9 @@ function Home({ onReset }: { onReset: () => void }) {
             </div>
             <h1 className="text-2xl font-bold text-stone-900">AI Lesson Agent</h1>
             <p className="mt-1 text-stone-500 text-sm">Upload a PDF and get a personalized quiz</p>
+            <a href="/docs" className="mt-2 inline-block text-xs text-teal-600 hover:text-teal-800 underline underline-offset-2 transition-colors">
+              How does this work? →
+            </a>
           </div>
           <UploadForm onUpload={handleUpload} />
         </div>
