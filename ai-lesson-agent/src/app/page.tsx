@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback, useMemo } from "react";
+import { useState, useCallback, useMemo, useEffect, useRef } from "react";
 import { useCoAgent, useCopilotChat } from "@copilotkit/react-core";
 import { TextMessage, Role } from "@copilotkit/runtime-client-gql";
 import { CopilotProvider } from "@/components/CopilotProvider";
@@ -78,9 +78,12 @@ export default function Root() {
 function Home({ onReset }: { onReset: () => void }) {
   const [documentId, setDocumentId] = useState<string | null>(null);
   const [resuming, setResuming] = useState(false);
+  const [restoring, setRestoring] = useState(false);
+  const [restoredState, setRestoredState] = useState<GraphStateType | null>(null);
+  const savedThreadId = useRef<string | null>(null);
 
   const { appendMessage: sendMessage } = useCopilotChat();
-  const { state, setState, running } = useCoAgent<GraphStateType>({
+  const { state: copilotState, setState, running } = useCoAgent<GraphStateType>({
     name: "ai-lesson-agent",
     initialState: {
       documentId: "",
@@ -100,6 +103,26 @@ function Home({ onReset }: { onReset: () => void }) {
       messages: [],
     },
   });
+
+  const state = restoredState ?? copilotState;
+
+  useEffect(() => {
+    const raw = localStorage.getItem("lesson-session");
+    if (!raw) return;
+    try {
+      const { documentId: savedDocId, lgThreadId } = JSON.parse(raw) as { documentId: string; lgThreadId: string };
+      if (!savedDocId || !lgThreadId) return;
+      savedThreadId.current = lgThreadId;
+      setRestoring(true);
+      setDocumentId(savedDocId);
+      fetch(`/api/langgraph/threads/${lgThreadId}/state`)
+        .then((r) => r.json())
+        .then((s) => { if (s?.values?.documentId) setRestoredState(s.values as GraphStateType); })
+        .catch(() => {})
+        .finally(() => setRestoring(false));
+    } catch { setRestoring(false); }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const handleUpload = useCallback(function handleUpload(id: string) {
     setDocumentId(id);
@@ -128,9 +151,15 @@ function Home({ onReset }: { onReset: () => void }) {
   }, [setState, sendMessage]);
 
   const resume = useCallback(async (resumeValue: string) => {
-    const activeRes = await fetch("/api/langgraph/active-thread");
-    const { thread_id: lgThreadId } = await activeRes.json();
-    if (!lgThreadId) return;
+    let lgThreadId = savedThreadId.current;
+    if (!lgThreadId) {
+      const activeRes = await fetch("/api/langgraph/active-thread");
+      const data = await activeRes.json();
+      lgThreadId = data.thread_id;
+      if (!lgThreadId) return;
+      savedThreadId.current = lgThreadId;
+      if (documentId) localStorage.setItem("lesson-session", JSON.stringify({ documentId, lgThreadId }));
+    }
 
     setResuming(true);
     try {
@@ -149,12 +178,15 @@ function Home({ onReset }: { onReset: () => void }) {
       const stateRes = await fetch(`/api/langgraph/threads/${lgThreadId}/state`);
       if (stateRes.ok) {
         const graphState = await stateRes.json();
-        if (graphState?.values) setState(() => graphState.values as GraphStateType);
+        if (graphState?.values) {
+          setState(() => graphState.values as GraphStateType);
+          if (savedThreadId.current) setRestoredState(graphState.values as GraphStateType);
+        }
       }
     } finally {
       setResuming(false);
     }
-  }, [setState]);
+  }, [setState, documentId]);
 
   const handlePlanApprove = useCallback(async (text: string) => {
     let parsed: unknown;
@@ -246,8 +278,15 @@ function Home({ onReset }: { onReset: () => void }) {
 
   return (
     <main className="min-h-screen flex flex-col items-center justify-center p-6 sm:p-10">
+      {restoring && (
+        <div className="flex flex-col items-center gap-4 py-16">
+          <Spinner />
+          <p className="text-stone-600 text-sm">Resuming your session…</p>
+        </div>
+      )}
+
       {/* Upload screen */}
-      {!documentId && (
+      {!documentId && !restoring && (
         <div className="w-full max-w-md animate-fade-in">
           <div className="mb-8 text-center">
             <div className="inline-flex items-center justify-center w-12 h-12 rounded-2xl bg-teal-600 mb-4">
@@ -266,7 +305,7 @@ function Home({ onReset }: { onReset: () => void }) {
       )}
 
       {/* Post-upload screens: show step rail */}
-      {documentId && (
+      {documentId && !restoring && (
         <div className="w-full max-w-2xl animate-fade-in">
           {/* Hide step rail during generation — only show when there's actionable UI */}
           {(showPlanApproval || showQuiz || isComplete) && <StepRail current={activeStep} />}
@@ -380,7 +419,7 @@ function Home({ onReset }: { onReset: () => void }) {
 
               <button
                 className="w-full py-3 rounded-xl bg-teal-600 text-white font-medium hover:bg-teal-700 transition-colors"
-                onClick={() => { setDocumentId(null); onReset(); }}
+                onClick={() => { localStorage.removeItem("lesson-session"); savedThreadId.current = null; setRestoredState(null); setDocumentId(null); onReset(); }}
               >
                 Start a new lesson
               </button>
