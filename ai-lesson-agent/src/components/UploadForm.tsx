@@ -12,6 +12,7 @@ export default function UploadForm({ onUpload }: Props) {
   const [fileName, setFileName] = useState<string | null>(null);
   const [dragging, setDragging] = useState(false);
   const [passcode, setPasscode] = useState("");
+  const [pendingFile, setPendingFile] = useState<File | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
   const submit = useCallback(async (file: File) => {
@@ -41,7 +42,7 @@ export default function UploadForm({ onUpload }: Props) {
 
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
-    const file = inputRef.current?.files?.[0];
+    const file = pendingFile ?? inputRef.current?.files?.[0];
     if (file) submit(file);
   }
 
@@ -49,13 +50,21 @@ export default function UploadForm({ onUpload }: Props) {
     e.preventDefault();
     setDragging(false);
     const file = e.dataTransfer.files[0];
-    if (file && (file.type === "application/pdf" || file.name.endsWith(".pdf"))) submit(file);
-    else setError("Only PDF files are supported");
+    if (file && (file.type === "application/pdf" || file.name.endsWith(".pdf"))) {
+      setPendingFile(file);
+      setFileName(file.name);
+      setError(null);
+    } else {
+      setError("Only PDF files are supported");
+    }
   }
 
   function handleFileChange(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
-    if (file) setFileName(file.name);
+    if (file) {
+      setPendingFile(file);
+      setFileName(file.name);
+    }
   }
 
   const uploading = status === "uploading";

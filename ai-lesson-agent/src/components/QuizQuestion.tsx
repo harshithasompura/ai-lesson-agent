@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, memo } from "react";
 
 type Result = {
   isCorrect: boolean;
@@ -17,7 +17,7 @@ function renderInline(text: string) {
   );
 }
 
-export function QuizQuestion({
+export const QuizQuestion = memo(function QuizQuestion({
   question,
   choices,
   hint,
@@ -93,8 +93,8 @@ export function QuizQuestion({
       {prerequisites && prerequisites.length > 0 && (
         <div className="flex flex-wrap gap-1.5 mb-5">
           <span className="text-xs text-stone-400">Builds on:</span>
-          {prerequisites.map((p, i) => (
-            <span key={i} className="text-xs bg-stone-100 text-stone-500 rounded-full px-2 py-0.5">{p}</span>
+          {prerequisites.map((p) => (
+            <span key={p} className="text-xs bg-stone-100 text-stone-500 rounded-full px-2 py-0.5">{p}</span>
           ))}
         </div>
       )}
@@ -109,7 +109,7 @@ export function QuizQuestion({
             const isDim = !isCorrectChoice && !isWrongSelected;
             return (
               <div
-                key={i}
+                key={choice}
                 className={[
                   "w-full text-left px-4 py-3.5 rounded-xl border-2 flex items-center gap-3 transition-all",
                   isCorrectChoice
@@ -143,7 +143,7 @@ export function QuizQuestion({
             const isWrongSelected = i === result.selectedIndex;
             return (
               <div
-                key={i}
+                key={choice}
                 className={[
                   "w-full text-left px-4 py-3.5 rounded-xl border-2 flex items-center gap-3",
                   isWrongSelected
@@ -171,7 +171,7 @@ export function QuizQuestion({
           const isLoading = isSelected && loading;
           return (
             <button
-              key={i}
+              key={choice}
               disabled={loading || (selected !== null && !isSelected)}
               onClick={() => handleSelect(i)}
               className={[
@@ -249,4 +249,4 @@ export function QuizQuestion({
       </div>
     </div>
   );
-}
+});

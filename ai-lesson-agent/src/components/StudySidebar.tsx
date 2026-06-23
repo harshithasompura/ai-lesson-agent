@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, memo } from "react";
 
 type Message = { role: "user" | "assistant"; content: string };
 
@@ -22,7 +22,7 @@ function Markdown({ children }: { children: string }) {
   );
 }
 
-export function StudySidebar({
+export const StudySidebar = memo(function StudySidebar({
   currentQuestion,
   objective,
 }: {
@@ -149,7 +149,7 @@ export function StudySidebar({
               </p>
             )}
             {messages.map((m, i) => (
-              <div key={i} className={`flex ${m.role === "user" ? "justify-end" : "justify-start"}`}>
+              <div key={`${i}-${m.role}`} className={`flex ${m.role === "user" ? "justify-end" : "justify-start"}`}>
                 <div
                   className={[
                     "max-w-[85%] rounded-xl px-3 py-2 text-sm leading-relaxed",
@@ -187,4 +187,4 @@ export function StudySidebar({
       )}
     </>
   );
-}
+});

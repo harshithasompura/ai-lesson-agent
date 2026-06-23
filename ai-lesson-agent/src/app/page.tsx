@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback } from "react";
+import { useState, useCallback, useMemo } from "react";
 import { useCoAgent, useCopilotChat } from "@copilotkit/react-core";
 import { TextMessage, Role } from "@copilotkit/runtime-client-gql";
 import { CopilotProvider } from "@/components/CopilotProvider";
@@ -101,7 +101,7 @@ function Home({ onReset }: { onReset: () => void }) {
     },
   });
 
-  function handleUpload(id: string) {
+  const handleUpload = useCallback(function handleUpload(id: string) {
     setDocumentId(id);
     setState({
       documentId: id,
@@ -125,7 +125,7 @@ function Home({ onReset }: { onReset: () => void }) {
     });
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     sendMessage(new TextMessage({ id: crypto.randomUUID(), content: "__start__", role: Role.User }));
-  }
+  }, [setState, sendMessage]);
 
   const resume = useCallback(async (resumeValue: string) => {
     const activeRes = await fetch("/api/langgraph/active-thread");
@@ -170,7 +170,7 @@ function Home({ onReset }: { onReset: () => void }) {
     await resume(JSON.stringify({ continue: true }));
   }, [resume]);
 
-  const showPlanApproval = documentId && !running && state.plan && !state.planApproved;
+  const showPlanApproval = documentId && !running && !resuming && state.plan && !state.planApproved;
   const showQuiz = documentId && !running && state.planApproved && state.currentQuestion;
 
   const isComplete =
@@ -179,7 +179,7 @@ function Home({ onReset }: { onReset: () => void }) {
     (state.objectives?.length ?? 0) > 0 &&
     state.currentObjectiveIndex >= state.objectives.length;
 
-  const recapText = (() => {
+  const recapText = useMemo(() => {
     if (!isComplete) return null;
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const last = state.messages?.findLast((m: any) => {
@@ -187,15 +187,14 @@ function Home({ onReset }: { onReset: () => void }) {
       return (m._getType?.() === "ai" || m.role === "assistant") && c.startsWith("## Session");
     });
     return last ? String((last as { content: unknown }).content) : null;
-  })();
+  }, [isComplete, state.messages]);
 
-  const recapStats = (() => {
+  const recapStats = useMemo(() => {
     if (!isComplete) return null;
     const records = (state.attempts ?? []).map((a: string) => {
       try { return JSON.parse(a); } catch { return null; }
     }).filter(Boolean) as Array<{ objectiveIndex: number; attemptNumber: number; resolution: string | null }>;
 
-    // Per objective: max attempt number seen and whether eventually correct
     const byObj = new Map<number, { maxAttempt: number; correct: boolean }>();
     for (const r of records) {
       const cur = byObj.get(r.objectiveIndex);
@@ -219,14 +218,28 @@ function Home({ onReset }: { onReset: () => void }) {
       firstTry,
       struggled,
     };
-  })();
+  }, [isComplete, state.attempts, state.objectives]);
 
-  const studyTips = (() => {
+  const studyTips = useMemo(() => {
     if (!recapText) return [];
     const match = recapText.match(/\*\*Study tips:\*\*\n([\s\S]+)/);
     if (!match) return [];
     return match[1].trim().split("\n").filter((l) => l.startsWith("- ")).map((l) => l.slice(2));
-  })();
+  }, [recapText]);
+
+  const quizData = useMemo(() => {
+    if (!showQuiz) return null;
+    try {
+      const { question, choices } = JSON.parse(state.currentQuestion);
+      const currentObj = state.objectives?.[state.currentObjectiveIndex] ?? "";
+      const prereqs = (state.prerequisites ?? [])
+        .filter((p: string) => p.endsWith(`→${currentObj}`))
+        .map((p: string) => p.split("→")[0]);
+      return { question, choices, currentObj, prereqs };
+    } catch {
+      return null;
+    }
+  }, [showQuiz, state.currentQuestion, state.objectives, state.currentObjectiveIndex, state.prerequisites]);
 
   // derive active step for the rail
   const activeStep: Step = !documentId ? "upload" : showPlanApproval ? "plan" : "quiz";
@@ -245,7 +258,7 @@ function Home({ onReset }: { onReset: () => void }) {
             <h1 className="text-2xl font-bold text-stone-900">AI Lesson Agent</h1>
             <p className="mt-1 text-stone-500 text-sm">Upload a PDF and get a personalized quiz</p>
             <a href="/docs" className="mt-2 inline-block text-xs text-teal-600 hover:text-teal-800 underline underline-offset-2 transition-colors">
-              How does this work? →
+              Documentation →
             </a>
           </div>
           <UploadForm onUpload={handleUpload} />
@@ -271,6 +284,14 @@ function Home({ onReset }: { onReset: () => void }) {
             <PlanApproval plan={state.plan} documentId={documentId} onApprove={handlePlanApprove} />
           )}
 
+          {/* Starting quiz (plan approved but resuming) */}
+          {resuming && !state.planApproved && (
+            <div className="flex flex-col items-center gap-4 py-16">
+              <Spinner />
+              <p className="text-stone-600 text-sm">Starting quiz…</p>
+            </div>
+          )}
+
           {/* Generating quiz / between questions */}
           {(running && state.planApproved) || (resuming && state.planApproved && !showQuiz) ? (
             <div className="flex flex-col items-center gap-4 py-16">
@@ -284,33 +305,22 @@ function Home({ onReset }: { onReset: () => void }) {
           ) : null}
 
           {/* Quiz */}
-          {showQuiz && (() => {
-            try {
-              const { question, choices } = JSON.parse(state.currentQuestion);
-              const currentObj = state.objectives?.[state.currentObjectiveIndex] ?? "";
-              const prereqs = (state.prerequisites ?? [])
-                .filter((p: string) => p.endsWith(`→${currentObj}`))
-                .map((p: string) => p.split("→")[0]);
-              return (
-                <QuizQuestion
-                  question={question}
-                  choices={choices}
-                  hint={state.lastHint ?? undefined}
-                  sourceRef={state.lastHintSourceRef ?? undefined}
-                  result={state.lastResult ?? undefined}
-                  sourcePassage={(state.sourceExcerpts ?? [])[state.currentObjectiveIndex] ?? undefined}
-                  prerequisites={prereqs}
-                  loading={resuming}
-                  objectiveIndex={state.currentObjectiveIndex}
-                  totalObjectives={state.objectives.length}
-                  onSelect={handleQuizAnswer}
-                  onContinue={handleContinue}
-                />
-              );
-            } catch {
-              return null;
-            }
-          })()}
+          {showQuiz && quizData && (
+            <QuizQuestion
+              question={quizData.question}
+              choices={quizData.choices}
+              hint={state.lastHint ?? undefined}
+              sourceRef={state.lastHintSourceRef ?? undefined}
+              result={state.lastResult ?? undefined}
+              sourcePassage={(state.sourceExcerpts ?? [])[state.currentObjectiveIndex] ?? undefined}
+              prerequisites={quizData.prereqs}
+              loading={resuming}
+              objectiveIndex={state.currentObjectiveIndex}
+              totalObjectives={state.objectives.length}
+              onSelect={handleQuizAnswer}
+              onContinue={handleContinue}
+            />
+          )}
 
           {/* Complete */}
           {isComplete && recapStats && (
