@@ -188,7 +188,7 @@ Pass threshold: ≥ 3/5. Max regeneration attempts: 3. MCQs that hit the cap pro
 | PDF < 100 words or > 15,000 words | Rejected at upload with user-facing message |
 | Junk / non-educational PDF | Heuristic rejection at upload |
 | User types off-domain objective | Blocked at plan approval — `/api/validate-objective` checks against document content and shows a hint |
-| Page refresh mid-quiz | Graph state restored from Postgres; chat history lost (in-memory only) |
+| Page refresh mid-quiz | Session returns to upload screen; graph checkpoints exist in Postgres but frontend does not reconnect to the existing thread (no threadId persistence) |
 | Page refresh before plan approval | Session returns to upload screen; no resume flow yet |
 | LangGraph checkpoint missing | Thread starts fresh; no recovery path |
 
@@ -284,11 +284,11 @@ Set `LANGSMITH_API_KEY` to stream agent traces to [LangSmith](https://smith.lang
 
 ## Known Issues & Future Improvements
 
-### Page refresh mid-quiz loses chat history
+### Page refresh mid-quiz restarts from upload
 
-The LangGraph graph state (objectives, answers, progress) persists across refreshes via Postgres checkpoints — the quiz resumes correctly. However, the StudySidebar chat history is held in React component state and is not persisted. Refreshing mid-quiz clears all prior chat messages; the sidebar restarts blank.
+Refreshing mid-quiz returns to the upload screen. LangGraph graph state is checkpointed to Postgres — the data is durable — but the frontend does not persist the CopilotKit thread ID across page loads. Without it, the app cannot reconnect to the existing thread and resume posting answers to the correct graph position.
 
-**Future improvement:** store chat messages in Postgres (keyed by `threadId`) and rehydrate on mount.
+**Future improvement:** persist the CopilotKit thread ID to `localStorage` and pass it back via `<CopilotKit threadId={...}>` on mount. Chat history (held in React state) would also need Postgres persistence keyed by `threadId` to survive a refresh.
 
 ### Page refresh before quiz start restarts from upload
 
