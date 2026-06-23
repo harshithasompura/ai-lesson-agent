@@ -13,6 +13,9 @@ export default function DocsPage() {
           <span className="text-sm font-medium text-stone-500">
             AI Lesson Agent &middot; Docs
           </span>
+          <a href="/stats" className="text-sm text-stone-400 hover:text-stone-700 transition-colors">
+            Stats
+          </a>
         </div>
       </nav>
 
@@ -89,7 +92,7 @@ export default function DocsPage() {
               },
               {
                 title: "Answers cannot leak to the hint path",
-                body: "Three separate agents. The Tutor Agent is constructed without the answer key in its context. Not instructed to avoid it. Never given it.",
+                body: "Three role-isolated stages. The hint stage is constructed without the answer key in its context. Not instructed to avoid it. Never given it.",
               },
               {
                 title: "Questions follow prerequisite order",
@@ -97,7 +100,7 @@ export default function DocsPage() {
               },
               {
                 title: "Questions are evaluated before you see them",
-                body: "Every question is scored 0 to 5 by a second model before it reaches the user. Below threshold, it is regenerated with the critique fed back as context, up to 3 attempts.",
+                body: "Every question passes deterministic structural checks first — no meta-options, no duplicate choices, question must end with a question mark. Then a four-criteria binary evaluation scores it on answer unambiguity, distractor plausibility, objective alignment, and source grounding. All four must pass. Failures regenerate with a targeted critique, up to 3 attempts.",
               },
             ].map((item) => (
               <div
@@ -121,7 +124,7 @@ export default function DocsPage() {
         <section className="space-y-8">
           <SectionLabel>System Overview</SectionLabel>
           <h2 className="text-3xl font-bold text-stone-900">
-            Three agents. One pipeline.
+            Three role-isolated stages. One pipeline.
           </h2>
 
           <p className="text-stone-600 leading-relaxed">
@@ -159,19 +162,19 @@ export default function DocsPage() {
                 {
                   step: "2",
                   title: "Review your learning plan",
-                  body: "The Planner Agent reads the document and proposes a set of learning objectives. You can edit, remove, or add objectives before approving. New objectives are validated against the document before approval.",
+                  body: "The Planner stage reads the document and proposes a set of learning objectives. You can edit, remove, or add objectives before approving. New objectives are validated against the document before approval.",
                   color: "blue",
                 },
                 {
                   step: "3",
                   title: "The quiz begins",
-                  body: "Questions are ordered by concept dependencies, foundations first. Each question is evaluated by a second model before you see it. Low-quality questions are regenerated automatically.",
+                  body: "Questions are ordered by concept dependencies, foundations first. Each question passes structural checks and a four-criteria quality evaluation before you see it. Low-quality questions are regenerated with targeted feedback automatically.",
                   color: "orange",
                 },
                 {
                   step: "4",
                   title: "Ask for a hint",
-                  body: "Wrong answers unlock a hint from the Tutor Agent, which was never given the answer key. It can point you in the right direction. It cannot tell you the answer.",
+                  body: "Wrong answers unlock a hint from the Tutor stage, which was never given the answer key. It can point you in the right direction. It cannot tell you the answer.",
                   color: "purple",
                 },
                 {

@@ -58,8 +58,13 @@ async function migratePostgres() {
         objective_index  INT,
         eval_attempts    INT,
         final_score      INT,
-        passed_cap       BOOLEAN
+        passed_cap       BOOLEAN,
+        failure_layer    TEXT
       );
+    `);
+
+    await client.query(`
+      ALTER TABLE mcq_eval_log ADD COLUMN IF NOT EXISTS failure_layer TEXT;
     `);
 
     console.log("✓ Postgres app tables ready");

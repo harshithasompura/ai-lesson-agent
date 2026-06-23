@@ -1,17 +1,66 @@
 import { interrupt } from "@langchain/langgraph";
 import { ChatAnthropic } from "@langchain/anthropic";
+import { Client as LangSmithClient } from "langsmith";
 import { z } from "zod";
 import { runNeo4j } from "@/lib/neo4j";
 import db from "@/lib/db";
 import { GraphStateType } from "./state";
 
+const lsClient = process.env.LANGSMITH_API_KEY ? new LangSmithClient() : null;
+
 // ── Helpers ───────────────────────────────────────────────────────────────
 
-async function logEval(documentId: string, objectiveIndex: number, evalAttempts: number, score: number, passedCap: boolean) {
+async function logEval(documentId: string, objectiveIndex: number, evalAttempts: number, overallPass: boolean, passedCap: boolean, failureLayer?: "structural" | "llm") {
   await db.query(
-    `INSERT INTO mcq_eval_log (document_id, objective_index, eval_attempts, final_score, passed_cap) VALUES ($1, $2, $3, $4, $5)`,
-    [documentId, objectiveIndex, evalAttempts, score, passedCap]
+    `INSERT INTO mcq_eval_log (document_id, objective_index, eval_attempts, final_score, passed_cap, failure_layer) VALUES ($1, $2, $3, $4, $5, $6)`,
+    [documentId, objectiveIndex, evalAttempts, overallPass ? 1 : 0, passedCap, failureLayer ?? null]
   );
+}
+
+// ── Structural Validator ───────────────────────────────────────────────────
+
+export function validateMCQStructure(mcq: { question: string; choices: string[]; correctIndex: number }): string | null {
+  const { question, choices, correctIndex } = mcq;
+
+  // 1. Exactly 4 distinct choices
+  if (new Set(choices).size !== 4) {
+    return `Choices must be exactly 4 distinct options (found ${new Set(choices).size} unique).`;
+  }
+
+  // 2. Question ≥ 10 words
+  if (question.trim().split(/\s+/).length < 10) {
+    return `Question is too short — must be at least 10 words.`;
+  }
+
+  // 3. Each choice ≥ 3 words
+  const shortChoice = choices.find((c) => c.trim().split(/\s+/).length < 3);
+  if (shortChoice) {
+    return `Choice "${shortChoice}" is too short — each choice must be at least 3 words.`;
+  }
+
+  // 4. No meta-options
+  const metaPattern = /^(all of the above|none of the above|both a and b)/i;
+  const metaChoice = choices.find((c) => metaPattern.test(c.trim()));
+  if (metaChoice) {
+    return `Meta-option detected: "${metaChoice}". Do not use "all of the above", "none of the above", or "both A and B".`;
+  }
+
+  // 5. Question must end with ?
+  if (!question.trimEnd().endsWith("?")) {
+    return `Question must end with a "?".`;
+  }
+
+  // 6. No answer leak: distractors must not contain correct choice text
+  const correctText = choices[correctIndex]?.toLowerCase() ?? "";
+  const leakingDistractor = choices.find((c, i) => {
+    if (i === correctIndex) return false;
+    return c.toLowerCase().includes(correctText);
+  });
+  if (leakingDistractor) {
+    return `Distractor "${leakingDistractor}" contains the correct answer text — this leaks the answer.`;
+  }
+
+  return null;
 }
 
 // ── Schemas ────────────────────────────────────────────────────────────────
@@ -25,8 +74,12 @@ const MCQSchema = z.object({
 });
 
 const EvalSchema = z.object({
-  score: z.number().int().min(0).max(5),
-  critique: z.string(),
+  criteria: z.array(z.object({
+    name: z.string(),
+    pass: z.boolean(),
+    reason: z.string(),
+  })),
+  overallPass: z.boolean(),
 });
 
 type MCQ = z.infer<typeof MCQSchema>;
@@ -56,14 +109,14 @@ Rules:
 - If no single passage supports it, quote the most relevant sentence
 - Respond with a JSON object: {"question": string, "choices": [string, string, string, string], "correctIndex": number, "explanation": string, "sourcePassage": string}`;
 
-const EVAL_SYSTEM = `You are a MCQ quality evaluator. Score the question on a 0–5 scale:
-- 5: unambiguous correct answer, all distractors plausible, directly tests the objective
-- 3–4: minor issues (slightly ambiguous, one weak distractor)
-- 0–2: serious issues (ambiguous answer, trivial distractors, objective drift)
+const EVAL_SYSTEM = `You are an MCQ quality evaluator. Evaluate the question on four independent binary criteria:
+1. unambiguous_answer: Is there exactly one unambiguously correct answer? (yes/no + reason)
+2. plausible_distractors: Are all distractors plausible (not obviously wrong)? (yes/no + which is weak if no)
+3. tests_objective: Does the question directly test the stated objective? (yes/no + reason)
+4. grounded_in_passage: Is the correct answer derivable from the source passage? (yes/no + reason)
 
-Be strict — a 3 is a borderline pass. Respond with a JSON object: {"score": number, "critique": string}`;
-
-const EVAL_PASS_THRESHOLD = 3;
+Return JSON: {"criteria": [{"name": string, "pass": boolean, "reason": string}, ...], "overallPass": boolean}
+overallPass must be true only if ALL four criteria pass.`;
 
 // ── Nodes ──────────────────────────────────────────────────────────────────
 
@@ -184,7 +237,7 @@ export async function selfEvalNode(
     if (nextEvalCount >= 3) {
       // Cap reached even on passage check — proceed with warning
       console.warn(`[quiz] sourcePassage not found in document for objective "${objective}". Cap reached, proceeding.`);
-      await logEval(state.documentId, state.currentObjectiveIndex, nextEvalCount, 0, true);
+      await logEval(state.documentId, state.currentObjectiveIndex, nextEvalCount, false, true, "structural");
       return { evalAttemptCount: nextEvalCount };
     }
     return {
@@ -200,6 +253,27 @@ export async function selfEvalNode(
     };
   }
 
+  // Layer A: structural validation (pure TS, no LLM)
+  const structuralCritique = validateMCQStructure({ question, choices, correctIndex });
+  if (structuralCritique !== null) {
+    if (nextEvalCount >= 3) {
+      console.warn(`[quiz] MCQ structural validation failed for objective "${objective}" at cap. Proceeding.`);
+      await logEval(state.documentId, state.currentObjectiveIndex, nextEvalCount, false, true, "structural");
+      return { evalAttemptCount: nextEvalCount };
+    }
+    return {
+      currentQuestion: "",
+      answerKey: "",
+      evalAttemptCount: nextEvalCount,
+      messages: [
+        {
+          role: "assistant" as const,
+          content: `MCQ critique (attempt ${nextEvalCount}): ${structuralCritique}`,
+        } as never,
+      ],
+    };
+  }
+
   const evaluation = await evalModel.invoke([
     { role: "system", content: EVAL_SYSTEM },
     {
@@ -208,9 +282,15 @@ export async function selfEvalNode(
     },
   ]);
 
-  if (evaluation.score >= EVAL_PASS_THRESHOLD) {
-    // Passes — log and proceed to present-question node
-    await logEval(state.documentId, state.currentObjectiveIndex, nextEvalCount, evaluation.score, false);
+  if (evaluation.overallPass) {
+    await logEval(state.documentId, state.currentObjectiveIndex, nextEvalCount, true, false);
+    if (lsClient) {
+      lsClient.createExample(
+        { question, choices, objective },
+        { criteria: evaluation.criteria, overallPass: true },
+        { datasetName: "mcq-eval" }
+      ).catch(() => {}); // ponytail: fire-and-forget, eval logging must not block quiz
+    }
     return {};
   }
 
@@ -218,11 +298,13 @@ export async function selfEvalNode(
   if (nextEvalCount >= 3) {
     // Past cap — proceed with best available MCQ, flag it
     console.warn(
-      `[quiz] MCQ self-eval cap reached for objective "${objective}". Score: ${evaluation.score}. Proceeding.`
+      `[quiz] MCQ self-eval cap reached for objective "${objective}". Proceeding with failing MCQ.`
     );
-    await logEval(state.documentId, state.currentObjectiveIndex, nextEvalCount, evaluation.score, true);
+    await logEval(state.documentId, state.currentObjectiveIndex, nextEvalCount, false, true, "llm");
     return { evalAttemptCount: nextEvalCount };
   }
+
+  const failedReasons = evaluation.criteria.filter((c) => !c.pass).map((c) => c.reason).join(". ");
 
   // Clear question so generateMCQNode re-runs with critique injected via messages
   return {
@@ -232,7 +314,7 @@ export async function selfEvalNode(
     messages: [
       {
         role: "assistant" as const,
-        content: `MCQ critique (attempt ${nextEvalCount}): ${evaluation.critique}`,
+        content: `MCQ critique (attempt ${nextEvalCount}): ${failedReasons}`,
       } as never,
     ],
   };

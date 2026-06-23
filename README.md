@@ -23,23 +23,23 @@ This system is an **agent** — a stateful process that pauses for human input, 
 What it guarantees structurally:
 
 - **Quiz cannot be skipped** — no graph edge exists for it. There is no action the AI or user can take to skip a question without submitting an answer.
-- **Answer key cannot leak to the hint path** — the Tutor Agent is constructed without it in context, not just instructed to avoid it.
+- **Answer key cannot leak to the hint path** — the hint stage is constructed without it in context, not just instructed to avoid it.
 - **Questions follow prerequisite order** — Neo4j graph with `PREREQUISITE_FOR` edges; degrades to list order if DB is cold.
-- **Questions self-evaluate before a student sees them** — Haiku judge scores each MCQ 0–5, max 3 regeneration attempts.
+- **Questions self-evaluate before a student sees them** — deterministic structural checks run first (no LLM), then a four-criteria binary evaluation; max 3 regeneration attempts.
 
 ---
 
 ## Design decisions
 
-### Why three agents, not one
+### Why three isolated stages, not one
 
-A single agent can't structurally isolate the answer key from the hint path. With three agents, the Tutor Agent is constructed without `answerKey` ever in its context — not a prompt instruction, a construction guarantee. The agent that gives hints literally cannot see what it was never given.
+A single model context can't structurally isolate the answer key from the hint path. With three role-isolated stages, the Tutor stage is constructed without `answerKey` ever in its context — not a prompt instruction, a construction guarantee. The stage that gives hints literally cannot see what it was never given.
 
-| Agent | What it does | What it never sees |
+| Stage | What it does | What it never sees |
 |---|---|---|
-| **Planner Agent** | Reads the PDF, builds the lesson plan | Quiz answers, answer keys |
-| **Quiz Agent** | Writes questions, self-evaluates, grades answers | — (holds the answer key) |
-| **Tutor Agent** | Gives hints on wrong answers, writes the final recap | The answer key — by design |
+| **Planner** | Reads the PDF, builds the lesson plan | Quiz answers, answer keys |
+| **Quiz** | Writes questions, self-evaluates, grades answers | — (holds the answer key) |
+| **Tutor** | Gives hints on wrong answers, writes the final recap | The answer key — by design |
 
 ### Why Neo4j for prerequisites
 
@@ -47,7 +47,7 @@ Prerequisite relationships are a graph, not a list. `PREREQUISITE_FOR` edges let
 
 ### Why structural enforcement over prompting
 
-Prompts can be argued around. Graph edges can't. There is no action the AI or user can take to skip a question without submitting an answer — no edge exists for it. The Tutor Agent has no code path to the answer key. These are construction guarantees, not behavioral instructions.
+Prompts can be argued around. Graph edges can't. There is no action the AI or user can take to skip a question without submitting an answer — no edge exists for it. The Tutor stage has no code path to the answer key. These are construction guarantees, not behavioral instructions.
 
 ---
 
@@ -76,7 +76,7 @@ graph LR
 
 ### Agent graph flow
 
-Nodes are color-coded by agent identity:
+Nodes are color-coded by stage:
 
 ```mermaid
 flowchart TD
@@ -85,8 +85,8 @@ flowchart TD
     C -->|user edits + approves| D[writeConceptGraph\nNeo4j]
     D --> E[selectObjective\nNeo4j ordering]
     E --> F[generateMCQ]
-    F --> G[selfEval\ncritiqueMessages →]
-    G -->|score low · max 3x| F
+    F --> G[selfEval\nstructural + 4-criteria]
+    G -->|eval fail · max 3x| F
     G -->|pass| H{presentQuestion\ninterrupt}
     H -->|answer submitted| I[grading]
     I -->|correct| J[resultNode]
@@ -110,16 +110,16 @@ flowchart TD
     style K fill:#2e7d52,color:#fff,stroke:#1a5c38
 ```
 
-**Legend:** 🔵 Planner Agent — 🟠 Quiz Agent — 🟢 Tutor Agent — 🟣 Interrupt (user pause)
+**Legend:** 🔵 Planner stage — 🟠 Quiz stage — 🟢 Tutor stage — 🟣 Interrupt (user pause)
 
 ### Key components
 
 | Path | Purpose |
 |---|---|
 | `src/agent/graph.ts` | Compiled LangGraph state graph with PostgresSaver checkpointer |
-| `src/agent/planner.ts` | Planner Agent — plan generation + plan approval interrupt node |
-| `src/agent/quiz.ts` | Quiz Agent — MCQ generation, `critiqueMessages` self-eval loop, grading |
-| `src/agent/tutor.ts` | Tutor Agent — hint node (no answer key in context) + completion/recap |
+| `src/agent/planner.ts` | Planner stage — plan generation + plan approval interrupt node |
+| `src/agent/quiz.ts` | Quiz stage — MCQ generation, `critiqueMessages` self-eval loop, grading |
+| `src/agent/tutor.ts` | Tutor stage — hint node (no answer key in context) + completion/recap |
 | `src/agent/conceptGraph.ts` | Neo4j prerequisite edge writer (runs after plan approval) |
 | `src/app/page.tsx` (route `/`) | Main app page — state-based interrupt detection, `resume()` via LangGraph HTTP |
 | `src/app/api/chat/route.ts` | StudySidebar chat endpoint — separate from agent hints; answer-key isolated, quiz-only gate |
@@ -138,16 +138,28 @@ flowchart TD
 
 1. User uploads PDF → `/api/upload` validates (word count: min 100, max 15,000 words; junk-doc heuristic), extracts text, stores in Postgres, returns `documentId`
 2. Frontend sends `documentId` to CopilotKit → agent starts, loads `extractedText` from Postgres
-3. **Planner Agent** runs `generatePlan` — one LLM call over full PDF text → structured output: `objectives[]` + `prerequisites[]`
+3. **Planner stage** runs `generatePlan` — one LLM call over full PDF text → structured output: `objectives[]` + `prerequisites[]`
 4. Graph hits `planApproval` interrupt → frontend detects via state poll, renders `PlanApproval` modal — user edits objectives inline; newly typed or edited objectives are validated against the document via `/api/validate-objective` before approval is allowed
 5. User approves → frontend POSTs `command.resume` to LangGraph HTTP stream, drains SSE, syncs state
 6. `writeConceptGraph` filters prerequisites against edited plan, writes `(:Objective)-[:PREREQUISITE_FOR]->(:Objective)` to Neo4j (8s timeout + fallback to list order)
-7. **Quiz loop** per objective: `selectObjective` (Neo4j prereq ordering, list-order fallback) → **Quiz Agent** `generateMCQ` → `selfEval` (scores on unambiguous answer / plausible distractors / objective alignment; injects `critiqueMessages` and regenerates if below threshold, max 3 attempts) → `presentQuestion` interrupt
-8. User answers → frontend resumes graph → **Quiz Agent** `grading` node evaluates against `answerKey` in state → writes `quiz_attempts` row to Postgres
-9. Wrong answer → **Tutor Agent** `hintNode` (answer key structurally excluded from context) → re-fires `presentQuestion` interrupt
+7. **Quiz loop** per objective: `selectObjective` (Neo4j prereq ordering, list-order fallback) → **Quiz stage** `generateMCQ` → `selfEval` (deterministic structural checks first, then four-criteria binary LLM eval — unambiguous answer / plausible distractors / objective alignment / source grounding; injects `critiqueMessages` and regenerates if any criterion fails, max 3 attempts) → `presentQuestion` interrupt
+8. User answers → frontend resumes graph → **Quiz stage** `grading` node evaluates against `answerKey` in state → writes `quiz_attempts` row to Postgres
+9. Wrong answer → **Tutor stage** `hintNode` (answer key structurally excluded from context) → re-fires `presentQuestion` interrupt
 10. Correct → `resultNode` → advance to next objective or `completion`
-11. **Tutor Agent** `completionNode` reads `quiz_attempts` from Postgres, splits `firstTry` vs `struggled`, enriches study tips via Neo4j prerequisite query (falls back to flat recap on failure)
+11. **Tutor stage** `completionNode` reads `quiz_attempts` from Postgres, splits `firstTry` vs `struggled`, enriches study tips via Neo4j prerequisite query (falls back to flat recap on failure)
 12. **StudySidebar** chat (`/api/chat`) runs in parallel throughout — separate from the agent's hint path; uses LangChain `ChatAnthropic` directly; withholds answer keys until `quizComplete` state is true, enforced server-side
+
+---
+
+## Security properties
+
+| Property | Guarantee | Mechanism |
+|----------|-----------|-----------|
+| Answer key cannot be extracted via chat | Sidebar `/api/chat` withholds answer until `quizComplete: true` | Server-side state check, not prompt instruction |
+| Answer key not in client-visible state | `answerKey` stored in graph state but never serialised into `currentQuestion` | Structural separation at write time in `generateMCQNode` |
+| Quiz cannot be skipped | No graph edge from `presentQuestion` to next objective without `grading` | LangGraph graph topology |
+| Hint stage cannot see answer key | `hintNode` receives state with `answerKey` field present but never uses it in its prompt | Construction guarantee — field excluded from prompt context |
+| MCQ structural flaws caught pre-LLM | Deterministic validator runs before self-eval LLM call | Pure TypeScript checks, no model dependency |
 
 ---
 
@@ -155,12 +167,26 @@ flowchart TD
 
 ### Self-eval quality gate
 
-Every MCQ passes through a second LLM call (`claude-haiku-4-5`) that scores it 0–5:
-- **5:** unambiguous correct answer, all distractors plausible, directly tests the objective
-- **3–4:** minor issues
-- **0–2:** serious issues (ambiguous answer, trivial distractors, objective drift)
+Every MCQ passes through two layers before a student sees it:
 
-Pass threshold: ≥ 3/5. Max regeneration attempts: 3. MCQs that hit the cap proceed with a `console.warn` — the quiz never blocks on quality.
+**Layer 1 — Deterministic structural checks (no LLM, no cost):**
+- Exactly 4 distinct choices
+- Question ≥ 10 words, ends with `?`
+- Each choice ≥ 3 words
+- No meta-options ("All of the above", "None of the above", "Both A and B")
+- No answer leak (distractor text doesn't contain the correct choice as substring)
+
+If any check fails → immediate regeneration with a specific critique. No LLM call spent.
+
+**Layer 2 — Four-criteria binary LLM eval (`claude-haiku-4-5`):**
+1. `unambiguous_answer` — exactly one correct answer
+2. `plausible_distractors` — no obviously wrong choices
+3. `tests_objective` — directly targets the stated learning objective
+4. `grounded_in_passage` — correct answer derivable from source passage
+
+All four must pass (`overallPass: true`). One weak distractor = regenerate with targeted critique. Max 3 total attempts. MCQs that hit the cap proceed with a `console.warn` — the quiz never blocks on quality.
+
+Using binary per-criterion judgment (rather than a holistic 0–5 score) reduces correlated failure between generator and evaluator: each axis is evaluated independently, so a subtly flawed question can't average its way past a fatal weakness.
 
 ### Runtime metrics tracked (Postgres)
 
@@ -174,7 +200,7 @@ Pass threshold: ≥ 3/5. Max regeneration attempts: 3. MCQs that hit the cap pro
 ### Known eval gaps
 
 - Citation grounding: `sourcePassage` is verified to appear verbatim in `extractedText` (normalised match) before the MCQ passes `selfEval`; if absent, triggers regeneration with critique. No byte-match against the raw PDF binary — `extractedText` is the extracted plain text
-- Self-eval judge uses the same model family as the generator — correlated failures possible
+- Self-eval judge uses the same model family as the generator — correlated failures reduced (deterministic pre-checks + per-criterion binary judgment) but not eliminated
 - No cross-session aggregate dashboard (future: LangSmith custom evals)
 
 ---
@@ -188,8 +214,8 @@ Pass threshold: ≥ 3/5. Max regeneration attempts: 3. MCQs that hit the cap pro
 | PDF < 100 words or > 15,000 words | Rejected at upload with user-facing message |
 | Junk / non-educational PDF | Heuristic rejection at upload |
 | User types off-domain objective | Blocked at plan approval — `/api/validate-objective` checks against document content and shows a hint |
-| Page refresh mid-quiz | Session returns to upload screen; graph checkpoints exist in Postgres but frontend does not reconnect to the existing thread (no threadId persistence) |
-| Page refresh before plan approval | Session returns to upload screen; no resume flow yet |
+| Page refresh mid-quiz | Session resumes at same question via `localStorage` thread ID persistence |
+| Page refresh before plan approval | Session resumes at plan approval screen if thread ID is stored |
 | LangGraph checkpoint missing | Thread starts fresh; no recovery path |
 
 ---
@@ -198,7 +224,7 @@ Pass threshold: ≥ 3/5. Max regeneration attempts: 3. MCQs that hit the cap pro
 
 **Stateful interrupts across process restarts.** LangGraph graphs pause mid-execution waiting for human input. The state must survive process restarts, deployments, and cold starts. Postgres checkpointer handles this — but it means every interrupt value must be serialisable and every resume must reconstruct exact graph position.
 
-**Answer-key isolation without a trust boundary.** The answer key exists in graph state that all nodes can technically read. Keeping it away from the Tutor Agent required routing it through a path the tutor node never reaches — verified by construction (the node never receives the key in its arguments) not just by instruction.
+**Answer-key isolation without a trust boundary.** The answer key exists in graph state that all nodes can technically read. Keeping it away from the Tutor stage required routing it through a path the tutor node never reaches — verified by construction (the node never receives the key in its arguments) not just by instruction.
 
 **Self-eval termination guarantee.** A quality loop that can run forever is a production incident. The cap at 3 attempts is a hard ceiling: if the LLM judge keeps failing, the quiz proceeds rather than blocks. Getting this wrong in either direction — too strict (blocks) or too loose (no cap) — breaks the user flow.
 
@@ -242,7 +268,7 @@ LANGSMITH_API_KEY=lsv2_...
 
 ### Observability
 
-Set `LANGSMITH_API_KEY` to stream agent traces to [LangSmith](https://smith.langchain.com) — token costs, latency, and per-node inputs/outputs visible per run. Optional; the app runs without it (tracing silently disabled).
+Set `LANGSMITH_API_KEY` to enable two things: agent traces (token costs, latency, per-node inputs/outputs visible per run) and MCQ eval dataset logging. After each self-eval pass, the question, choices, objective, and per-criterion results are logged to a `mcq-eval` dataset in LangSmith for offline analysis. Optional; the app runs without it (both features silently disabled).
 
 `LANGGRAPH_DEPLOYMENT_URL` defaults to `http://localhost:3000/api/langgraph` (the local Next.js adapter). Point it at a LangGraph Cloud deployment URL to run the graph remotely instead.
 
@@ -284,17 +310,11 @@ Set `LANGSMITH_API_KEY` to stream agent traces to [LangSmith](https://smith.lang
 
 ## Known Issues & Future Improvements
 
-### Page refresh mid-quiz restarts from upload
+### Page refresh mid-quiz (resolved)
 
-Refreshing mid-quiz returns to the upload screen. LangGraph graph state is checkpointed to Postgres — the data is durable — but the frontend does not persist the CopilotKit thread ID across page loads. Without it, the app cannot reconnect to the existing thread and resume posting answers to the correct graph position.
+Page refresh now resumes the session at the same question. The CopilotKit thread ID and minimal UI state (`documentId`, `phase`, `objectives`, `currentObjectiveIndex`) are persisted to `localStorage` on session start. On mount, the app reads the stored thread ID and restores state without re-uploading. Starting a new lesson clears the stored entry.
 
-**Future improvement:** persist the CopilotKit thread ID to `localStorage` and pass it back via `<CopilotKit threadId={...}>` on mount. Chat history (held in React state) would also need Postgres persistence keyed by `threadId` to survive a refresh.
-
-### Page refresh before quiz start restarts from upload
-
-If the user refreshes before completing plan approval and starting the quiz, the session returns to the upload screen. There is no "resume pending session" flow.
-
-**Future improvement:** detect an existing in-progress `threadId` in Postgres on load and offer to resume from the last checkpoint.
+Expired or missing threads (e.g. after a server restart) fall through to the upload screen gracefully.
 
 ### Domain / learner history view
 
